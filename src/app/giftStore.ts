@@ -114,6 +114,7 @@ export type GiftProject = {
   relationship: string;
   backgroundIndex: number;
   customBgUrl?: string | null;
+  headerTitle?: string;
   frontMessage?: string;
   wish: string;
   journalPages: ScrapbookPage[];
@@ -155,6 +156,7 @@ export const emptyProject = (): GiftProject => ({
   relationship: "Special Person",
   backgroundIndex: 0,
   customBgUrl: null,
+  headerTitle: "",
   frontMessage: "",
   wish: "",
   journalPages: [{ id: crypto.randomUUID(), photos: EMPTY_PHOTOS(), style: 1, texts: {}, data: {} }],

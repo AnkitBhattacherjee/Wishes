@@ -664,6 +664,20 @@ export default function WishPage() {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isFrontWishModalOpen, setIsFrontWishModalOpen] = useState(false);
+  const [isEditingHeader, setIsEditingHeader] = useState(false);
+  const [headerInput, setHeaderInput] = useState(project.headerTitle || "");
+  const headerInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (project.headerTitle !== undefined) {
+      setHeaderInput(project.headerTitle);
+    }
+  }, [project.headerTitle]);
+
+  const handleSaveHeader = () => {
+    setIsEditingHeader(false);
+    updateProject({ headerTitle: headerInput.trim() });
+  };
   const { recipient: name, occasion, relationship, backgroundIndex: bgIndex, wish: savedWish } = project;
   const frontWish = project.frontMessage?.trim() || "";
   const defaultFrontWish = `Wishing you a day as magical, bright, and wonderful as your smile! ✨`;
@@ -1182,26 +1196,82 @@ export default function WishPage() {
         ))}
       </div>
 
-      {/* Top Heading */}
+      {/* Top Heading: Tap placeholder to write a custom heading / wish line */}
       <motion.div
-        className="absolute top-[40px] sm:top-[50px] left-1/2 -translate-x-1/2 z-20 cursor-pointer max-w-[90%] text-center"
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={() => setIsModalOpen(true)}
+        className="absolute top-[32px] sm:top-[42px] left-1/2 -translate-x-1/2 z-20 max-w-[94vw] text-center"
+        whileHover={!isEditingHeader ? { scale: 1.02 } : undefined}
       >
-        <p className="font-['Alex_Brush',cursive] text-[52px] sm:text-[62px] lg:text-[70px] text-[#3a2a2a] select-none leading-none drop-shadow-sm">
-          Write Your Wish
-        </p>
-        <motion.div
-          className="mx-auto mt-2 rounded-full"
-          style={{
-            width: "180px",
-            height: "2.5px",
-            background: "linear-gradient(90deg, transparent, rgba(196,88,122,0.5), transparent)",
-          }}
-          animate={{ scaleX: [0.6, 1.1, 0.6] }}
-          transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-        />
+        {isEditingHeader ? (
+          <div className="flex flex-col items-center">
+            <input
+              ref={headerInputRef}
+              type="text"
+              value={headerInput}
+              onChange={(e) => setHeaderInput(e.target.value)}
+              onBlur={handleSaveHeader}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleSaveHeader();
+                } else if (e.key === "Escape") {
+                  setHeaderInput(project.headerTitle || "");
+                  setIsEditingHeader(false);
+                }
+              }}
+              placeholder="Write Your Wish..."
+              maxLength={65}
+              className="font-['Alex_Brush',cursive] text-[42px] sm:text-[54px] lg:text-[64px] text-[#3a2a2a] text-center bg-white/85 backdrop-blur-md px-5 py-0.5 rounded-2xl border-2 border-pink-300 focus:border-pink-500 outline-none w-[92vw] max-w-[560px] leading-tight shadow-xl"
+              autoFocus
+            />
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[10px] font-sans font-semibold text-pink-700/80">
+                Press Enter or tap outside to save ✨
+              </span>
+              {headerInput.trim() && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setHeaderInput("");
+                    updateProject({ headerTitle: "" });
+                    setIsEditingHeader(false);
+                  }}
+                  className="text-[10px] font-sans font-semibold text-gray-500 hover:text-red-600 underline cursor-pointer"
+                >
+                  Reset to default
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div
+            onClick={() => {
+              setHeaderInput(project.headerTitle || "");
+              setIsEditingHeader(true);
+            }}
+            className="cursor-pointer group flex flex-col items-center select-none"
+            title="Tap to write a line ✍️"
+          >
+            <div className="flex items-center justify-center gap-2 px-3 py-1 rounded-2xl hover:bg-white/30 backdrop-blur-xs transition-all">
+              <p className="font-['Alex_Brush',cursive] text-[48px] sm:text-[60px] lg:text-[68px] text-[#3a2a2a] select-none leading-none drop-shadow-sm group-hover:text-pink-900 transition-colors">
+                {project.headerTitle?.trim() || "Write Your Wish"}
+              </p>
+              <Edit3
+                size={16}
+                className="text-pink-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+              />
+            </div>
+            <motion.div
+              className="mx-auto mt-2 rounded-full"
+              style={{
+                width: "180px",
+                height: "2.5px",
+                background: "linear-gradient(90deg, transparent, rgba(196,88,122,0.5), transparent)",
+              }}
+              animate={{ scaleX: [0.6, 1.1, 0.6] }}
+              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </div>
+        )}
       </motion.div>
 
       {/* Centerpiece Greeting Card (Short 1-2 line wish / quote, distinct from the complete letter) */}
