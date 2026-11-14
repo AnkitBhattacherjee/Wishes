@@ -29,6 +29,7 @@ import {
 import {
   extractYouTubeId,
   extractSunoAudioUrl,
+  resolveSunoAudioUrl,
   isSunoUrl,
   isVideoMedia,
 } from "../utils/audioUtils";
@@ -251,11 +252,11 @@ export function MailboxModal({
   };
 
   // Handle YouTube or Suno AI URL change on active revealed card
-  const handleSaveCardYt = () => {
+  const handleSaveCardYt = async () => {
     if (!activeItem) return;
     const input = cardYtInput.trim();
     const ytId = extractYouTubeId(input);
-    const sunoAudio = extractSunoAudioUrl(input);
+    const sunoAudio = await resolveSunoAudioUrl(input);
     const isSuno = isSunoUrl(input);
 
     const updated = items.map((i) => {
@@ -394,7 +395,7 @@ export function MailboxModal({
     else if (type === "surprise") setNewPuppetId("lantern");
   };
 
-  const handleSaveNewItem = () => {
+  const handleSaveNewItem = async () => {
     if (!newTitle.trim()) return;
 
     let newItem: MailboxBubbleItem;
@@ -402,7 +403,7 @@ export function MailboxModal({
     if (addTab === "song") {
       const input = newYoutubeUrl.trim();
       const ytId = extractYouTubeId(input);
-      const sunoAudio = extractSunoAudioUrl(input);
+      const sunoAudio = await resolveSunoAudioUrl(input);
       const isSuno = isSunoUrl(input);
 
       newItem = {

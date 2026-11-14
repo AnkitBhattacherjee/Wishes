@@ -27,7 +27,7 @@ import {
   saveGiftProject,
   uploadGiftFile,
 } from "../giftStore";
-import { extractSunoAudioUrl, isSunoUrl, isVideoMedia } from "../utils/audioUtils";
+import { extractSunoAudioUrl, resolveSunoAudioUrl, isSunoUrl, isVideoMedia } from "../utils/audioUtils";
 import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFont";
 import { MailboxModal } from "./MailboxModal";
 import { ShareModal } from "./ShareModal";
@@ -373,6 +373,7 @@ export default function RoomPage() {
   const [showMusicMenu, setShowMusicMenu] = useState<boolean>(false);
   const [sunoInput, setSunoInput] = useState<string>("");
   const [isUploadingSong, setIsUploadingSong] = useState<boolean>(false);
+  const [isResolvingSuno, setIsResolvingSuno] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   // Active cake preview
@@ -496,33 +497,41 @@ export default function RoomPage() {
     }
   };
 
-  const handleApplySunoSong = () => {
+  const handleApplySunoSong = async () => {
     if (!sunoInput.trim()) return;
-    const directUrl = extractSunoAudioUrl(sunoInput);
-    if (!directUrl) {
-      alert("Please paste a valid Suno AI link (e.g. https://suno.com/song/...) or direct audio URL.");
-      return;
-    }
-    const isSuno = isSunoUrl(sunoInput);
-    const title = isSuno ? `My Suno AI Song for ${name} 🎵` : `Celebration Song for ${name} 🎵`;
-    setSongUrl(directUrl);
-    setSongTitle(title);
-    const next = saveGiftProject({
-      ...project,
-      customSongUrl: directUrl,
-      customSongName: title,
-    });
-    setProject(next);
-    persistGiftProject(next).catch(() => {});
-    setShowMusicMenu(false);
-    setSunoInput("");
-    setTimeout(() => {
-      const media = isVideoMedia(directUrl) ? videoRef.current : audioRef.current;
-      if (media) {
-        media.load();
-        startAudioPlayback();
+    setIsResolvingSuno(true);
+    try {
+      const directUrl = await resolveSunoAudioUrl(sunoInput);
+      if (!directUrl) {
+        alert("Could not load this Suno link. Please open your song on Suno, copy the link from your browser address bar (suno.com/song/...), or upload the downloaded MP3 file!");
+        return;
       }
-    }, 250);
+      const isSuno = isSunoUrl(sunoInput);
+      const title = isSuno ? `My Suno AI Song for ${name} 🎵` : `Celebration Song for ${name} 🎵`;
+      setSongUrl(directUrl);
+      setSongTitle(title);
+      const next = saveGiftProject({
+        ...project,
+        customSongUrl: directUrl,
+        customSongName: title,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
+      setShowMusicMenu(false);
+      setSunoInput("");
+      setTimeout(() => {
+        const media = isVideoMedia(directUrl) ? videoRef.current : audioRef.current;
+        if (media) {
+          media.load();
+          startAudioPlayback();
+        }
+      }, 250);
+    } catch (err) {
+      console.error("Suno resolution failed", err);
+      alert("Could not play this Suno song. Try copying the link from the browser address bar (suno.com/song/...) or upload the downloaded MP3!");
+    } finally {
+      setIsResolvingSuno(false);
+    }
   };
 
   const handleResetSong = () => {
@@ -881,9 +890,10 @@ export default function RoomPage() {
                       />
                       <button
                         onClick={handleApplySunoSong}
-                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95"
+                        disabled={isResolvingSuno}
+                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95 disabled:opacity-50"
                       >
-                        Play & Save
+                        {isResolvingSuno ? "Loading... ⏳" : "Play & Save"}
                       </button>
                     </div>
                   </div>
