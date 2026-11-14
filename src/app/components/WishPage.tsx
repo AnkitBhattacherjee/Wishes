@@ -667,7 +667,19 @@ export default function WishPage() {
   const { recipient: name, occasion, relationship, backgroundIndex: bgIndex, wish: savedWish } = project;
   const frontWish = project.frontMessage?.trim() || "";
   const defaultFrontWish = `Wishing you a day as magical, bright, and wonderful as your smile! ✨`;
-  const displayFrontWish = frontWish || defaultFrontWish;
+  const cleanFrontWish = (text: string) => {
+    if (!text) return "";
+    let cleaned = text.trim();
+    if (
+      (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+      (cleaned.startsWith('“') && cleaned.endsWith('”'))
+    ) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+    // Clean raw markdown asterisks if any were typed or pasted
+    return cleaned.replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1");
+  };
+  const displayFrontWish = cleanFrontWish(frontWish) || defaultFrontWish;
 
   const handleSaveFrontWish = (newFrontWish: string) => {
     updateProject({ frontMessage: newFrontWish.trim() });

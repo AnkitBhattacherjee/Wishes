@@ -198,6 +198,13 @@ export function MailboxModal({
   const cardPhotoInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
+  // Universal Scroll Message Editing State (All Puppets / Messages)
+  const [isEditingCardMessage, setIsEditingCardMessage] = useState(false);
+  const [editCardTitle, setEditCardTitle] = useState("");
+  const [editCardSender, setEditCardSender] = useState("");
+  const [editCardMessage, setEditCardMessage] = useState("");
+  const [editCardEmoji, setEditCardEmoji] = useState("💌");
+
   // Live Microphone Voice Recording
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -258,6 +265,11 @@ export function MailboxModal({
       setIsEditingYtOnCard(false);
       setIsEditingPhotoOnCard(false);
       setIsUploadingCardPhoto(false);
+      setIsEditingCardMessage(false);
+      setEditCardTitle(item.title || "");
+      setEditCardSender(item.sender || "");
+      setEditCardMessage(item.message || item.photoCaption || "");
+      setEditCardEmoji(item.stampEmoji || "💌");
       if (item.youtubeUrl) setCardYtInput(item.youtubeUrl);
       if (item.photoUrl) setCardPhotoUrlInput(item.photoUrl);
       setCardPhotoCaptionInput(item.photoCaption || item.message || "");
@@ -400,6 +412,86 @@ export function MailboxModal({
     updateItems(updated);
     setIsEditingPhotoOnCard(false);
     showToast("Photo & caption saved! 📸");
+  };
+
+  // Handle universal message edit on active card (all puppet types)
+  const handleSaveCardMessage = () => {
+    if (!activeItem) return;
+    const updatedTitle = editCardTitle.trim() || activeItem.title;
+    const updatedSender = editCardSender.trim() || activeItem.sender || "Your Special Person";
+    const updatedMessage = editCardMessage.trim();
+    const updatedEmoji = editCardEmoji || activeItem.stampEmoji || "💌";
+
+    const updatedItem: MailboxBubbleItem = {
+      ...activeItem,
+      title: updatedTitle,
+      sender: updatedSender,
+      message: updatedMessage,
+      photoCaption: activeItem.type === "photo" ? updatedMessage : activeItem.photoCaption,
+      stampEmoji: updatedEmoji,
+    };
+    setActiveItem(updatedItem);
+
+    const exists = items.some(
+      (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+    );
+    const updated = exists
+      ? items.map((i) =>
+          i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+            ? updatedItem
+            : i
+        )
+      : [...items, updatedItem];
+
+    updateItems(updated);
+    setIsEditingCardMessage(false);
+    showToast("Message updated! ✨");
+  };
+
+  // Handle deleting or clearing element from active card
+  const handleDeleteCardMessage = () => {
+    if (!activeItem) return;
+    if (window.confirm("Are you sure you want to delete or clear this message?")) {
+      const exists = items.some(
+        (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+      );
+
+      let updated: MailboxBubbleItem[];
+      if (exists) {
+        if (activeItem.puppetId) {
+          const cleared: MailboxBubbleItem = {
+            ...activeItem,
+            title: activeItem.title || "A Secret Memory",
+            message: "",
+            photoCaption: "",
+            sender: "Your Special Person",
+            photoUrl: undefined,
+          };
+          updated = items.map((i) =>
+            i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+              ? cleared
+              : i
+          );
+          setActiveItem(cleared);
+        } else {
+          updated = items.filter((i) => i.id !== activeItem.id);
+          setActiveItem(null);
+        }
+      } else {
+        const cleared: MailboxBubbleItem = {
+          ...activeItem,
+          title: activeItem.title || "A Secret Memory",
+          message: "",
+          photoCaption: "",
+          sender: "Your Special Person",
+        };
+        updated = [...items, cleared];
+        setActiveItem(cleared);
+      }
+      updateItems(updated);
+      setIsEditingCardMessage(false);
+      showToast("Message cleared / deleted 🗑️");
+    }
   };
 
   // Recording controls
@@ -910,417 +1002,587 @@ export function MailboxModal({
                     scrollbarWidth: "none",
                   }}
                 >
-                  {/* Top Header: Puppet info & Memory Title */}
-                  <div className="flex flex-col items-center shrink-0">
-                    <span className="font-serif text-[10px] sm:text-[11px] font-bold text-amber-300/90 tracking-widest uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
-                      {theme === "putulkhela"
-                        ? `${getPuppetForItem(activeItem, 0).nameBn} (${getPuppetForItem(activeItem, 0).nameEn})`
-                        : activeItem.date || "Secret Delivery"}
-                    </span>
+                  {isEditingCardMessage ? (
+                    /* ── EDIT MODE ON ROYAL SCROLL ── */
+                    <div className="flex-1 flex flex-col justify-between py-1 w-full text-center">
+                      {/* Edit Form Header */}
+                      <div className="shrink-0 mb-1">
+                        <span className="font-serif text-[10px] sm:text-[11px] font-bold text-amber-300/90 tracking-widest uppercase">
+                          {theme === "putulkhela"
+                            ? `${getPuppetForItem(activeItem, 0).nameBn} (${getPuppetForItem(activeItem, 0).nameEn})`
+                            : "Puppet Memory"}
+                        </span>
+                        <h3 className="font-serif font-bold text-base sm:text-lg text-amber-200 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] mt-0.5">
+                          Rewrite or Delete Memory ✍️
+                        </h3>
+                      </div>
 
-                    <h3 className="font-['Alex_Brush',cursive] text-2xl sm:text-3xl lg:text-4xl text-amber-200 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] leading-tight mt-0.5">
-                      {activeItem.title}
-                    </h3>
+                      {/* Form Fields */}
+                      <div
+                        className="flex-1 overflow-y-auto px-1 flex flex-col gap-2 text-left"
+                        style={{ scrollbarWidth: "none" }}
+                      >
+                        {/* Title */}
+                        <div>
+                          <label className="text-[10px] font-serif font-bold text-amber-300/90 tracking-wider uppercase block mb-0.5">
+                            Memory Title
+                          </label>
+                          <input
+                            type="text"
+                            value={editCardTitle}
+                            onChange={(e) => setEditCardTitle(e.target.value)}
+                            placeholder="e.g. Building Our Dreams"
+                            className="w-full px-2.5 py-1 rounded-lg border border-amber-400/60 bg-black/60 text-amber-100 font-serif text-xs outline-none focus:border-amber-300"
+                          />
+                        </div>
 
-                    <p className="font-serif text-[10px] sm:text-[11px] text-amber-300/80 italic mt-0.5">
-                      From: {activeItem.sender || "Your Special Person"}
-                    </p>
+                        {/* Sender */}
+                        <div>
+                          <label className="text-[10px] font-serif font-bold text-amber-300/90 tracking-wider uppercase block mb-0.5">
+                            From (Sender Name)
+                          </label>
+                          <input
+                            type="text"
+                            value={editCardSender}
+                            onChange={(e) => setEditCardSender(e.target.value)}
+                            placeholder="e.g. Your Special Person"
+                            className="w-full px-2.5 py-1 rounded-lg border border-amber-400/60 bg-black/60 text-amber-100 font-serif text-xs outline-none focus:border-amber-300"
+                          />
+                        </div>
 
-                    {/* Ornate Gold Filigree Divider */}
-                    <div className="flex items-center justify-center gap-2 text-amber-400/80 my-1 text-xs">
-                      <span>❧</span>
-                      <span className="w-12 h-[1px] bg-amber-400/40" />
-                      <span>✦</span>
-                      <span className="w-12 h-[1px] bg-amber-400/40" />
-                      <span>☙</span>
-                    </div>
-                  </div>
+                        {/* Message Textarea (Height for at least 2 lines) */}
+                        <div>
+                          <label className="text-[10px] font-serif font-bold text-amber-300/90 tracking-wider uppercase block mb-0.5">
+                            Secret Message / Words (At least 2 lines)
+                          </label>
+                          <textarea
+                            rows={3}
+                            style={{ minHeight: "72px" }}
+                            value={editCardMessage}
+                            onChange={(e) => setEditCardMessage(e.target.value)}
+                            placeholder="Write your words, dreams, or wishes here..."
+                            className="w-full min-h-[72px] px-3 py-2 rounded-xl border border-amber-400/70 bg-black/70 text-amber-100 font-['Caveat',cursive] text-lg sm:text-xl leading-relaxed outline-none focus:border-amber-300 resize-y"
+                          />
+                        </div>
 
-                  {/* Body Content by Type */}
-                  <div className="my-auto flex flex-col items-center justify-center py-1 w-full">
-                    {/* 1. SONG: YouTube Player inside the Royal Scroll */}
-                    {activeItem.type === "song" && (
-                      <div className="w-full flex flex-col items-center gap-2">
-                        {activeItem.youtubeId ? (
-                          <div className="w-full aspect-video rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black relative">
-                            <iframe
-                              ref={ytIframeRef}
-                              src={`https://www.youtube-nocookie.com/embed/${activeItem.youtubeId}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1`}
-                              title={activeItem.title}
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                              allowFullScreen
-                              className="w-full h-full"
-                              onLoad={() => setIsPlayingAudio(true)}
-                            />
+                        {/* Stamp Emoji Selection */}
+                        <div>
+                          <label className="text-[10px] font-serif font-bold text-amber-300/90 tracking-wider uppercase block mb-1">
+                            Stamp Emoji
+                          </label>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {["💌", "💖", "🏛️", "🌟", "📖", "🏮", "🥂", "🌸", "✨", "🪆", "🎶", "🎭"].map((em) => (
+                              <button
+                                key={em}
+                                type="button"
+                                onClick={() => setEditCardEmoji(em)}
+                                className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center transition-all cursor-pointer ${
+                                  editCardEmoji === em
+                                    ? "bg-amber-400 text-amber-950 scale-110 shadow-md ring-2 ring-amber-300"
+                                    : "bg-black/50 hover:bg-black/80 border border-amber-400/40 text-amber-100"
+                                }`}
+                              >
+                                {em}
+                              </button>
+                            ))}
                           </div>
-                        ) : activeItem.audioUrl ? (
-                          <div className="flex flex-col items-center gap-2.5 w-full py-2.5 px-3.5 rounded-2xl bg-black/50 border border-amber-400/50 shadow-inner">
-                            {isVideoMedia(activeItem.audioUrl) ? (
-                              <video
-                                ref={videoPlayerRef}
-                                src={activeItem.audioUrl}
-                                loop
-                                autoPlay
-                                playsInline
-                                style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
-                                onPlay={() => setIsPlayingAudio(true)}
-                                onPause={() => setIsPlayingAudio(false)}
-                              />
-                            ) : (
-                              <audio
-                                ref={audioPlayerRef}
-                                src={activeItem.audioUrl}
-                                loop
-                                autoPlay
-                                playsInline
-                                onPlay={() => setIsPlayingAudio(true)}
-                                onPause={() => setIsPlayingAudio(false)}
-                              />
+                        </div>
+                      </div>
+
+                      {/* Action Buttons in Edit Mode */}
+                      <div className="shrink-0 pt-2 border-t border-amber-400/30 flex flex-col items-center gap-2 mt-1">
+                        <div className="flex items-center justify-center gap-2 w-full">
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingCardMessage(false)}
+                            className="px-3.5 py-1 rounded-full text-[11px] font-serif font-semibold text-amber-200/80 bg-black/40 hover:bg-black/60 border border-amber-400/30 transition-all cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveCardMessage}
+                            className="px-4 py-1 rounded-full text-[11px] font-serif font-bold text-amber-950 shadow-md border border-amber-200 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                            style={{
+                              background: "linear-gradient(135deg, #fde047 0%, #f59e0b 50%, #d97706 100%)",
+                            }}
+                          >
+                            Save Changes ✨
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleDeleteCardMessage}
+                          className="flex items-center gap-1 text-[10px] font-serif text-rose-300/90 hover:text-rose-200 cursor-pointer transition-colors"
+                        >
+                          <Trash2 size={11} />
+                          <span>Delete / Clear Message</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── VIEW MODE ON ROYAL SCROLL ── */
+                    <>
+                      {/* Top Header: Puppet info & Memory Title */}
+                      <div className="flex flex-col items-center shrink-0">
+                        <span className="font-serif text-[10px] sm:text-[11px] font-bold text-amber-300/90 tracking-widest uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
+                          {theme === "putulkhela"
+                            ? `${getPuppetForItem(activeItem, 0).nameBn} (${getPuppetForItem(activeItem, 0).nameEn})`
+                            : activeItem.date || "Secret Delivery"}
+                        </span>
+
+                        <h3 className="font-['Alex_Brush',cursive] text-2xl sm:text-3xl lg:text-4xl text-amber-200 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] leading-tight mt-0.5">
+                          {activeItem.title}
+                        </h3>
+
+                        <p className="font-serif text-[10px] sm:text-[11px] text-amber-300/80 italic mt-0.5">
+                          From: {activeItem.sender || "Your Special Person"}
+                        </p>
+
+                        {/* Ornate Gold Filigree Divider */}
+                        <div className="flex items-center justify-center gap-2 text-amber-400/80 my-1 text-xs">
+                          <span>❧</span>
+                          <span className="w-12 h-[1px] bg-amber-400/40" />
+                          <span>✦</span>
+                          <span className="w-12 h-[1px] bg-amber-400/40" />
+                          <span>☙</span>
+                        </div>
+                      </div>
+
+                      {/* Body Content by Type */}
+                      <div className="my-auto flex flex-col items-center justify-center py-1 w-full">
+                        {/* 1. SONG: YouTube Player inside the Royal Scroll */}
+                        {activeItem.type === "song" && (
+                          <div className="w-full flex flex-col items-center gap-2">
+                            {activeItem.youtubeId ? (
+                              <div className="w-full aspect-video rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black relative">
+                                <iframe
+                                  ref={ytIframeRef}
+                                  src={`https://www.youtube-nocookie.com/embed/${activeItem.youtubeId}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1`}
+                                  title={activeItem.title}
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                  allowFullScreen
+                                  className="w-full h-full"
+                                  onLoad={() => setIsPlayingAudio(true)}
+                                />
+                              </div>
+                            ) : activeItem.audioUrl ? (
+                              <div className="flex flex-col items-center gap-2.5 w-full py-2.5 px-3.5 rounded-2xl bg-black/50 border border-amber-400/50 shadow-inner">
+                                {isVideoMedia(activeItem.audioUrl) ? (
+                                  <video
+                                    ref={videoPlayerRef}
+                                    src={activeItem.audioUrl}
+                                    loop
+                                    autoPlay
+                                    playsInline
+                                    style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
+                                    onPlay={() => setIsPlayingAudio(true)}
+                                    onPause={() => setIsPlayingAudio(false)}
+                                  />
+                                ) : (
+                                  <audio
+                                    ref={audioPlayerRef}
+                                    src={activeItem.audioUrl}
+                                    loop
+                                    autoPlay
+                                    playsInline
+                                    onPlay={() => setIsPlayingAudio(true)}
+                                    onPause={() => setIsPlayingAudio(false)}
+                                  />
+                                )}
+
+                                {/* Rotating Vinyl & Info */}
+                                <div className="flex items-center gap-3 w-full">
+                                  <motion.div
+                                    animate={isPlayingAudio ? { rotate: 360 } : { rotate: 0 }}
+                                    transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                                    className="size-11 rounded-full bg-gradient-to-tr from-amber-700 via-amber-950 to-black border-2 border-amber-400/80 flex items-center justify-center shadow-lg shrink-0 relative"
+                                  >
+                                    <Disc size={24} className="text-amber-400/80" />
+                                    <div className="absolute size-2.5 rounded-full bg-amber-400" />
+                                  </motion.div>
+
+                                  <div className="flex flex-col text-left flex-1 min-w-0">
+                                    <span className="font-['Playfair_Display',serif] text-xs sm:text-sm text-amber-100 font-bold truncate">
+                                      {activeItem.title}
+                                    </span>
+                                    <span className="text-[10px] text-amber-300/80 flex items-center gap-1 font-sans">
+                                      <Sparkles size={10} className="text-amber-400 shrink-0" />
+                                      <span className="truncate">
+                                        {activeItem.songSource === "suno"
+                                          ? "Suno AI Audio Track"
+                                          : activeItem.artist || "Audio Track"}
+                                      </span>
+                                    </span>
+                                  </div>
+
+                                  {/* Play / Pause Toggle Button */}
+                                  <button
+                                    onClick={() => {
+                                      const media = getActiveMedia();
+                                      if (!media) return;
+                                      if (isPlayingAudio) {
+                                        media.pause();
+                                        setIsPlayingAudio(false);
+                                      } else {
+                                        media.play().catch(() => {});
+                                        setIsPlayingAudio(true);
+                                      }
+                                    }}
+                                    className="size-8 rounded-full bg-gradient-to-r from-amber-400 to-amber-600 text-amber-950 flex items-center justify-center font-bold shadow-md hover:scale-105 transition-transform cursor-pointer shrink-0"
+                                  >
+                                    {isPlayingAudio ? (
+                                      <Pause size={13} fill="currentColor" />
+                                    ) : (
+                                      <Play size={13} fill="currentColor" className="ml-0.5" />
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Soundwave Bars */}
+                                <div className="flex items-center justify-center gap-1 h-3.5 w-full">
+                                  {[0.3, 0.7, 1, 0.5, 0.9, 0.4, 0.8, 1, 0.6, 0.8, 0.4, 0.7].map((h, i) => (
+                                    <motion.span
+                                      key={i}
+                                      className="w-1 rounded-full bg-amber-400/80"
+                                      animate={
+                                        isPlayingAudio
+                                          ? { height: ["25%", `${Math.round(h * 100)}%`, "25%"] }
+                                          : { height: "25%" }
+                                      }
+                                      transition={{
+                                        duration: 0.5 + (i % 3) * 0.2,
+                                        repeat: Infinity,
+                                        ease: "easeInOut",
+                                        delay: i * 0.04,
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="flex items-center gap-1.5 text-[11px] font-serif text-amber-200">
+                              <Music size={12} className="text-amber-400" />
+                              <span className="font-semibold">
+                                {activeItem.songSource === "suno"
+                                  ? "Suno AI Dedicated Track"
+                                  : activeItem.artist || "Dedicated Song"}
+                              </span>
+                              <span>•</span>
+                              <span className="text-emerald-400 font-medium">Plays in site with 0 redirect ✨</span>
+                            </div>
+
+                            {activeItem.message && (
+                              <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 mt-0.5">
+                                "{activeItem.message}"
+                              </p>
                             )}
 
-                            {/* Rotating Vinyl & Info */}
-                            <div className="flex items-center gap-3 w-full">
-                              <motion.div
-                                animate={isPlayingAudio ? { rotate: 360 } : { rotate: 0 }}
-                                transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                                className="size-11 rounded-full bg-gradient-to-tr from-amber-700 via-amber-950 to-black border-2 border-amber-400/80 flex items-center justify-center shadow-lg shrink-0 relative"
-                              >
-                                <Disc size={24} className="text-amber-400/80" />
-                                <div className="absolute size-2.5 rounded-full bg-amber-400" />
-                              </motion.div>
-
-                              <div className="flex flex-col text-left flex-1 min-w-0">
-                                <span className="font-['Playfair_Display',serif] text-xs sm:text-sm text-amber-100 font-bold truncate">
-                                  {activeItem.title}
-                                </span>
-                                <span className="text-[10px] text-amber-300/80 flex items-center gap-1 font-sans">
-                                  <Sparkles size={10} className="text-amber-400 shrink-0" />
-                                  <span className="truncate">
-                                    {activeItem.songSource === "suno"
-                                      ? "Suno AI Audio Track"
-                                      : activeItem.artist || "Audio Track"}
-                                  </span>
-                                </span>
-                              </div>
-
-                              {/* Play / Pause Toggle Button */}
-                              <button
-                                onClick={() => {
-                                  const media = getActiveMedia();
-                                  if (!media) return;
-                                  if (isPlayingAudio) {
-                                    media.pause();
-                                    setIsPlayingAudio(false);
-                                  } else {
-                                    media.play().catch(() => {});
-                                    setIsPlayingAudio(true);
-                                  }
-                                }}
-                                className="size-8 rounded-full bg-gradient-to-r from-amber-400 to-amber-600 text-amber-950 flex items-center justify-center font-bold shadow-md hover:scale-105 transition-transform cursor-pointer shrink-0"
-                              >
-                                {isPlayingAudio ? (
-                                  <Pause size={13} fill="currentColor" />
-                                ) : (
-                                  <Play size={13} fill="currentColor" className="ml-0.5" />
-                                )}
-                              </button>
+                            {/* Quick Edit YouTube or Suno AI Link */}
+                            <div className="w-full mt-1 pt-1 border-t border-amber-400/20 flex flex-col items-center">
+                              {!isEditingYtOnCard ? (
+                                <button
+                                  onClick={() => setIsEditingYtOnCard(true)}
+                                  className="flex items-center gap-1 text-[10px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer"
+                                >
+                                  <Edit3 size={11} />
+                                  <span>{activeItem.youtubeId || activeItem.audioUrl ? "Change Song (YouTube or Suno AI)" : "Paste YouTube or Suno AI Link"}</span>
+                                </button>
+                              ) : (
+                                <div className="w-full flex flex-col gap-1 mt-1">
+                                  <input
+                                    type="text"
+                                    placeholder="Paste YouTube or Suno AI link: https://suno.com/song/..."
+                                    value={cardYtInput}
+                                    onChange={(e) => setCardYtInput(e.target.value)}
+                                    className="w-full px-2.5 py-1 rounded-md border border-amber-400/60 bg-black/60 text-xs text-amber-100 placeholder-amber-400/50 outline-none"
+                                  />
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => setIsEditingYtOnCard(false)}
+                                      className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={handleSaveCardYt}
+                                      className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
+                                    >
+                                      Save & Play
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
+                          </div>
+                        )}
 
-                            {/* Soundwave Bars */}
-                            <div className="flex items-center justify-center gap-1 h-3.5 w-full">
-                              {[0.3, 0.7, 1, 0.5, 0.9, 0.4, 0.8, 1, 0.6, 0.8, 0.4, 0.7].map((h, i) => (
-                                <motion.span
-                                  key={i}
-                                  className="w-1 rounded-full bg-amber-400/80"
-                                  animate={
-                                    isPlayingAudio
-                                      ? { height: ["25%", `${Math.round(h * 100)}%`, "25%"] }
-                                      : { height: "25%" }
-                                  }
-                                  transition={{
-                                    duration: 0.5 + (i % 3) * 0.2,
-                                    repeat: Infinity,
-                                    ease: "easeInOut",
-                                    delay: i * 0.04,
-                                  }}
+                        {/* 2. NOTE / DREAM: Handwritten Royal Letter */}
+                        {(activeItem.type === "note" || activeItem.type === "dream") && (
+                          <div className="flex flex-col items-center justify-center py-2 px-1">
+                            <span className="text-2xl mb-1">{activeItem.stampEmoji || "💌"}</span>
+                            {activeItem.message ? (
+                              <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
+                                "{activeItem.message}"
+                              </p>
+                            ) : (
+                              <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
+                                (No message written yet. Tap "Edit Message ✍️" below to write one!)
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 3. VOICE NOTE */}
+                        {activeItem.type === "voice" && (
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-amber-700 text-amber-100 flex items-center justify-center shadow-lg border border-amber-300/50 mb-0.5">
+                              <Mic size={22} className="animate-pulse" />
+                            </div>
+                            <p className="font-serif text-[11px] text-amber-200 font-bold uppercase tracking-wider">
+                              Personal Voice Whisper (~{activeItem.voiceDuration || 8}s)
+                            </p>
+
+                            {activeItem.voiceUrl ? (
+                              <div className="flex flex-col items-center gap-1.5 w-full">
+                                <audio
+                                  ref={audioPlayerRef}
+                                  src={activeItem.voiceUrl}
+                                  onPlay={() => setIsPlayingAudio(true)}
+                                  onPause={() => setIsPlayingAudio(false)}
+                                  onEnded={() => setIsPlayingAudio(false)}
                                 />
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className="flex items-center gap-1.5 text-[11px] font-serif text-amber-200">
-                          <Music size={12} className="text-amber-400" />
-                          <span className="font-semibold">
-                            {activeItem.songSource === "suno"
-                              ? "Suno AI Dedicated Track"
-                              : activeItem.artist || "Dedicated Song"}
-                          </span>
-                          <span>•</span>
-                          <span className="text-emerald-400 font-medium">Plays in site with 0 redirect ✨</span>
-                        </div>
-
-                        {activeItem.message && (
-                          <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 mt-0.5">
-                            "{activeItem.message}"
-                          </p>
-                        )}
-
-                        {/* Quick Edit YouTube or Suno AI Link */}
-                        <div className="w-full mt-1 pt-1 border-t border-amber-400/20 flex flex-col items-center">
-                          {!isEditingYtOnCard ? (
-                            <button
-                              onClick={() => setIsEditingYtOnCard(true)}
-                              className="flex items-center gap-1 text-[10px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer"
-                            >
-                              <Edit3 size={11} />
-                              <span>{activeItem.youtubeId || activeItem.audioUrl ? "Change Song (YouTube or Suno AI)" : "Paste YouTube or Suno AI Link"}</span>
-                            </button>
-                          ) : (
-                            <div className="w-full flex flex-col gap-1 mt-1">
-                              <input
-                                type="text"
-                                placeholder="Paste YouTube or Suno AI link: https://suno.com/song/..."
-                                value={cardYtInput}
-                                onChange={(e) => setCardYtInput(e.target.value)}
-                                className="w-full px-2.5 py-1 rounded-md border border-amber-400/60 bg-black/60 text-xs text-amber-100 placeholder-amber-400/50 outline-none"
-                              />
-                              <div className="flex items-center justify-end gap-1.5">
                                 <button
-                                  onClick={() => setIsEditingYtOnCard(false)}
-                                  className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                  onClick={() => {
+                                    if (!audioPlayerRef.current) return;
+                                    if (isPlayingAudio) {
+                                      audioPlayerRef.current.pause();
+                                      setIsPlayingAudio(false);
+                                    } else {
+                                      audioPlayerRef.current.play();
+                                      setIsPlayingAudio(true);
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 px-5 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-700 text-amber-100 font-serif font-bold text-xs shadow-md border border-amber-300/40 cursor-pointer"
                                 >
-                                  Cancel
-                                </button>
-                                <button
-                                  onClick={handleSaveCardYt}
-                                  className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
-                                >
-                                  Save & Play
+                                  {isPlayingAudio ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+                                  <span>{isPlayingAudio ? "Pause Recording" : "Listen to Voice Note"}</span>
                                 </button>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                            ) : (
+                              <p className="font-serif italic text-xs text-amber-200/80 px-2">
+                                "A little personal voice note recorded just for you."
+                              </p>
+                            )}
 
-                    {/* 2. NOTE / DREAM: Handwritten Royal Letter */}
-                    {(activeItem.type === "note" || activeItem.type === "dream") && (
-                      <div className="flex flex-col items-center justify-center py-2 px-1">
-                        <span className="text-2xl mb-1">{activeItem.stampEmoji || "💌"}</span>
-                        <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
-                          "{activeItem.message || "A sweet dream and secret wish for our journey together."}"
-                        </p>
-                      </div>
-                    )}
-
-                    {/* 3. VOICE NOTE */}
-                    {activeItem.type === "voice" && (
-                      <div className="flex flex-col items-center justify-center gap-2">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-amber-700 text-amber-100 flex items-center justify-center shadow-lg border border-amber-300/50 mb-0.5">
-                          <Mic size={22} className="animate-pulse" />
-                        </div>
-                        <p className="font-serif text-[11px] text-amber-200 font-bold uppercase tracking-wider">
-                          Personal Voice Whisper (~{activeItem.voiceDuration || 8}s)
-                        </p>
-
-                        {activeItem.voiceUrl ? (
-                          <div className="flex flex-col items-center gap-1.5 w-full">
-                            <audio
-                              ref={audioPlayerRef}
-                              src={activeItem.voiceUrl}
-                              onPlay={() => setIsPlayingAudio(true)}
-                              onPause={() => setIsPlayingAudio(false)}
-                              onEnded={() => setIsPlayingAudio(false)}
-                            />
-                            <button
-                              onClick={() => {
-                                if (!audioPlayerRef.current) return;
-                                if (isPlayingAudio) {
-                                  audioPlayerRef.current.pause();
-                                  setIsPlayingAudio(false);
-                                } else {
-                                  audioPlayerRef.current.play();
-                                  setIsPlayingAudio(true);
-                                }
-                              }}
-                              className="flex items-center gap-1.5 px-5 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-700 text-amber-100 font-serif font-bold text-xs shadow-md border border-amber-300/40 cursor-pointer"
-                            >
-                              {isPlayingAudio ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-                              <span>{isPlayingAudio ? "Pause Recording" : "Listen to Voice Note"}</span>
-                            </button>
+                            {activeItem.message && (
+                              <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 mt-1">
+                                "{activeItem.message}"
+                              </p>
+                            )}
                           </div>
-                        ) : (
-                          <p className="font-serif italic text-xs text-amber-200/80 px-2">
-                            "A little personal voice note recorded just for you."
-                          </p>
                         )}
 
-                        {activeItem.message && (
-                          <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 mt-1">
-                            "{activeItem.message}"
-                          </p>
+                        {/* 4. PHOTO */}
+                        {activeItem.type === "photo" && (
+                          <div className="flex flex-col items-center gap-2 w-full">
+                            {/* Clickable Photo Frame */}
+                            <div
+                              onClick={() => cardPhotoInputRef.current?.click()}
+                              className="relative group w-full max-h-48 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/50 cursor-pointer transition-all hover:border-amber-300"
+                              title="Click to upload or change photo"
+                            >
+                              {activeItem.photoUrl ? (
+                                <img
+                                  src={activeItem.photoUrl}
+                                  alt={activeItem.title}
+                                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center text-amber-300 gap-2 p-4 text-center bg-gradient-to-b from-amber-950/60 to-black/80">
+                                  <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+                                    <Camera size={26} />
+                                  </div>
+                                  <span className="text-xs font-serif font-bold tracking-wide">
+                                    Tap here to upload a photo 📸
+                                  </span>
+                                  <span className="text-[10px] text-amber-200/70">
+                                    (Supports JPG, PNG, WEBP from phone or PC)
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Hover Overlay when photo already exists */}
+                              {activeItem.photoUrl && (
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 text-white p-2 text-center backdrop-blur-xs">
+                                  <Camera size={22} className="text-amber-400" />
+                                  <span className="text-xs font-semibold font-serif text-amber-200">
+                                    Click to change photo
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Uploading Spinner */}
+                              {isUploadingCardPhoto && (
+                                <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-2 text-amber-300 z-10">
+                                  <div className="w-7 h-7 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                                  <span className="text-xs font-serif font-bold">Uploading photo... ✨</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Hidden Native File Input */}
+                            <input
+                              ref={cardPhotoInputRef}
+                              type="file"
+                              accept="image/*"
+                              onChange={handleCardPhotoUpload}
+                              className="hidden"
+                            />
+
+                            {/* Action Buttons & Link Editor */}
+                            <div className="w-full flex flex-col items-center gap-1">
+                              {!isEditingPhotoOnCard ? (
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => cardPhotoInputRef.current?.click()}
+                                    className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/90 hover:text-amber-100 transition-colors cursor-pointer bg-black/30 hover:bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40"
+                                  >
+                                    <Upload size={11} />
+                                    <span>{activeItem.photoUrl ? "Change Photo File" : "Upload Photo File"}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCardPhotoUrlInput(activeItem.photoUrl || "");
+                                      setCardPhotoCaptionInput(activeItem.photoCaption || activeItem.message || "");
+                                      setIsEditingPhotoOnCard(true);
+                                    }}
+                                    className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/80 hover:text-amber-100 transition-colors cursor-pointer"
+                                  >
+                                    <Edit3 size={11} />
+                                    <span>Paste Link / Caption</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="w-full flex flex-col gap-1.5 mt-1 p-2 rounded-xl bg-black/60 border border-amber-400/40">
+                                  <input
+                                    type="url"
+                                    placeholder="Paste image or Unsplash link: https://..."
+                                    value={cardPhotoUrlInput}
+                                    onChange={(e) => setCardPhotoUrlInput(e.target.value)}
+                                    className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
+                                  />
+                                  <textarea
+                                    rows={2}
+                                    style={{ minHeight: "50px" }}
+                                    placeholder="Write photo caption (at least 2 lines)..."
+                                    value={cardPhotoCaptionInput}
+                                    onChange={(e) => setCardPhotoCaptionInput(e.target.value)}
+                                    className="w-full min-h-[50px] px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none resize-none font-['Caveat',cursive] text-base"
+                                  />
+                                  <div className="flex items-center justify-end gap-2 pt-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setIsEditingPhotoOnCard(false)}
+                                      className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleSaveCardPhoto}
+                                      className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
+                                    >
+                                      Save Photo
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Displayed Caption */}
+                            {(activeItem.photoCaption || activeItem.message) ? (
+                              <p className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center">
+                                "{activeItem.photoCaption || activeItem.message}"
+                              </p>
+                            ) : (
+                              <p className="font-serif italic text-xs text-amber-200/70 px-2 my-1 text-center">
+                                (No caption yet. Tap "Edit Message ✍️" to write one!)
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 5. SURPRISE */}
+                        {activeItem.type === "surprise" && (
+                          <div className="flex flex-col items-center justify-center gap-2 py-2">
+                            <span className="text-3xl animate-bounce">✨</span>
+                            {activeItem.message ? (
+                              <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+                                "{activeItem.message}"
+                              </p>
+                            ) : (
+                              <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
+                                (No surprise message yet. Tap "Edit Message ✍️" to add one!)
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
 
-                    {/* 4. PHOTO */}
-                    {activeItem.type === "photo" && (
-                      <div className="flex flex-col items-center gap-2 w-full">
-                        {/* Clickable Photo Frame */}
-                        <div
-                          onClick={() => cardPhotoInputRef.current?.click()}
-                          className="relative group w-full max-h-48 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/50 cursor-pointer transition-all hover:border-amber-300"
-                          title="Click to upload or change photo"
+                      {/* ── Universal Edit & Delete Action Row for All Puppets / Cards ── */}
+                      <div className="flex items-center justify-center gap-2 my-1 pt-1.5 border-t border-amber-400/25 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditCardTitle(activeItem.title || "");
+                            setEditCardSender(activeItem.sender || "Your Special Person");
+                            setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                            setEditCardEmoji(activeItem.stampEmoji || "💌");
+                            setIsEditingCardMessage(true);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/45 hover:bg-black/70 text-amber-200 border border-amber-400/40 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
                         >
-                          {activeItem.photoUrl ? (
-                            <img
-                              src={activeItem.photoUrl}
-                              alt={activeItem.title}
-                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center text-amber-300 gap-2 p-4 text-center bg-gradient-to-b from-amber-950/60 to-black/80">
-                              <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-                                <Camera size={26} />
-                              </div>
-                              <span className="text-xs font-serif font-bold tracking-wide">
-                                Tap here to upload a photo 📸
-                              </span>
-                              <span className="text-[10px] text-amber-200/70">
-                                (Supports JPG, PNG, WEBP from phone or PC)
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Hover Overlay when photo already exists */}
-                          {activeItem.photoUrl && (
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 text-white p-2 text-center backdrop-blur-xs">
-                              <Camera size={22} className="text-amber-400" />
-                              <span className="text-xs font-semibold font-serif text-amber-200">
-                                Click to change photo
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Uploading Spinner */}
-                          {isUploadingCardPhoto && (
-                            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-2 text-amber-300 z-10">
-                              <div className="w-7 h-7 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                              <span className="text-xs font-serif font-bold">Uploading photo... ✨</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Hidden Native File Input */}
-                        <input
-                          ref={cardPhotoInputRef}
-                          type="file"
-                          accept="image/*"
-                          onChange={handleCardPhotoUpload}
-                          className="hidden"
-                        />
-
-                        {/* Action Buttons & Link Editor */}
-                        <div className="w-full flex flex-col items-center gap-1">
-                          {!isEditingPhotoOnCard ? (
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <button
-                                type="button"
-                                onClick={() => cardPhotoInputRef.current?.click()}
-                                className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/90 hover:text-amber-100 transition-colors cursor-pointer bg-black/30 hover:bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40"
-                              >
-                                <Upload size={11} />
-                                <span>{activeItem.photoUrl ? "Change Photo File" : "Upload Photo File"}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCardPhotoUrlInput(activeItem.photoUrl || "");
-                                  setCardPhotoCaptionInput(activeItem.photoCaption || activeItem.message || "");
-                                  setIsEditingPhotoOnCard(true);
-                                }}
-                                className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/80 hover:text-amber-100 transition-colors cursor-pointer"
-                              >
-                                <Edit3 size={11} />
-                                <span>Paste Link / Caption</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="w-full flex flex-col gap-1.5 mt-1 p-2 rounded-xl bg-black/60 border border-amber-400/40">
-                              <input
-                                type="url"
-                                placeholder="Paste image or Unsplash link: https://..."
-                                value={cardPhotoUrlInput}
-                                onChange={(e) => setCardPhotoUrlInput(e.target.value)}
-                                className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
-                              />
-                              <input
-                                type="text"
-                                placeholder="Write photo caption..."
-                                value={cardPhotoCaptionInput}
-                                onChange={(e) => setCardPhotoCaptionInput(e.target.value)}
-                                className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
-                              />
-                              <div className="flex items-center justify-end gap-2 pt-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setIsEditingPhotoOnCard(false)}
-                                  className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleSaveCardPhoto}
-                                  className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
-                                >
-                                  Save Photo
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Displayed Caption */}
-                        <p className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center">
-                          "{activeItem.photoCaption || activeItem.message || "A moment to keep in our hearts forever."}"
-                        </p>
+                          <Edit3 size={12} className="text-amber-400" />
+                          <span>Edit Message ✍️</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDeleteCardMessage}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-950/40 hover:bg-rose-950/70 text-rose-300 border border-rose-400/35 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                          title="Delete or clear this message"
+                        >
+                          <Trash2 size={12} />
+                          <span>Delete</span>
+                        </button>
                       </div>
-                    )}
 
-                    {/* 5. SURPRISE */}
-                    {activeItem.type === "surprise" && (
-                      <div className="flex flex-col items-center justify-center gap-2 py-2">
-                        <span className="text-3xl animate-bounce">✨</span>
-                        <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
-                          "{activeItem.message || "A sweet surprise popped right into your heart!"}"
+                      {/* Bottom Footer inside Scroll */}
+                      <div className="flex flex-col items-center shrink-0 mt-1">
+                        <p className="font-['Caveat',cursive] text-sm text-amber-300/90 italic flex items-center gap-1">
+                          <Heart size={12} className="text-amber-400 fill-amber-400" />
+                          <span>Yours always, by your special person</span>
                         </p>
+
+                        <button
+                          onClick={() => {
+                            setActiveItem(null);
+                            setIsPlayingAudio(false);
+                          }}
+                          className="mt-1.5 px-6 py-1 rounded-full text-[11px] font-serif font-bold text-amber-950 shadow-[0_4px_16px_rgba(251,191,36,0.4)] border border-amber-200 cursor-pointer backdrop-blur-md transition-all hover:scale-105 active:scale-95"
+                          style={{
+                            background: "linear-gradient(135deg, #fde047 0%, #f59e0b 50%, #d97706 100%)",
+                          }}
+                        >
+                          Back to Stage 🎭
+                        </button>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Bottom Footer inside Scroll */}
-                  <div className="flex flex-col items-center shrink-0 mt-1">
-                    <p className="font-['Caveat',cursive] text-sm text-amber-300/90 italic flex items-center gap-1">
-                      <Heart size={12} className="text-amber-400 fill-amber-400" />
-                      <span>Yours always, by your special person</span>
-                    </p>
-
-                    <button
-                      onClick={() => {
-                        setActiveItem(null);
-                        setIsPlayingAudio(false);
-                      }}
-                      className="mt-1.5 px-6 py-1 rounded-full text-[11px] font-serif font-bold text-amber-950 shadow-[0_4px_16px_rgba(251,191,36,0.4)] border border-amber-200 cursor-pointer backdrop-blur-md transition-all hover:scale-105 active:scale-95"
-                      style={{
-                        background: "linear-gradient(135deg, #fde047 0%, #f59e0b 50%, #d97706 100%)",
-                      }}
-                    >
-                      Back to Stage 🎭
-                    </button>
-                  </div>
+                    </>
+                  )}
                 </div>
               </motion.div>
             </motion.div>
@@ -1710,14 +1972,15 @@ export function MailboxModal({
 
                       <div>
                         <label className="font-bold text-gray-700 block mb-1">
-                          Photo Caption (Vintage Polaroid style)
+                          Photo Caption (Vintage Polaroid style, at least 2 lines)
                         </label>
-                        <input
-                          type="text"
+                        <textarea
+                          rows={2}
+                          style={{ minHeight: "50px" }}
                           placeholder="e.g. That magical evening under the festival lights ✨"
                           value={newPhotoCaption}
                           onChange={(e) => setNewPhotoCaption(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs"
+                          className="w-full min-h-[50px] px-3 py-2 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs resize-none"
                         />
                       </div>
                     </div>
@@ -1727,13 +1990,14 @@ export function MailboxModal({
                   <div>
                     <label className="font-bold text-gray-700 block mb-1">
                       {addTab === "note" || addTab === "dream"
-                        ? "Special Note Message *"
+                        ? "Special Note Message (At least 2 lines) *"
                         : addTab === "surprise"
-                        ? "Surprise Pop Message *"
-                        : "Personal Message / Dedication (Optional)"}
+                        ? "Surprise Pop Message (At least 2 lines) *"
+                        : "Personal Message / Dedication (Optional, at least 2 lines)"}
                     </label>
                     <textarea
                       rows={3}
+                      style={{ minHeight: "68px" }}
                       placeholder={
                         addTab === "note" || addTab === "dream"
                           ? "Write your secret love note, dream, or personal promise..."
@@ -1743,7 +2007,7 @@ export function MailboxModal({
                       }
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs resize-none"
+                      className="w-full min-h-[68px] px-3.5 py-2.5 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs resize-y"
                     />
                   </div>
 
