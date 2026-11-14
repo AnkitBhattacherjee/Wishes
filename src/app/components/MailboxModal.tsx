@@ -1299,19 +1299,19 @@ export function MailboxModal({
                     />
                   </div>
 
-                  {/* ── Prominent YouTube or Suno AI Song Link Section ── */}
+                  {/* ── Prominent YouTube Song Link Section ── */}
                   {addTab === "song" && (
                     <div className="flex flex-col gap-3 p-3.5 rounded-2xl bg-amber-50/70 border border-amber-300">
                       <div>
                         <label className="font-bold text-amber-950 flex items-center justify-between mb-1">
                           <span className="flex items-center gap-1.5">
                             <Music size={14} className="text-amber-600" />
-                            <span>YouTube or Suno AI Song Link (Zero Redirect — Plays on Site)</span>
+                            <span>YouTube Song Link (Plays in App • Zero Redirect)</span>
                           </span>
                         </label>
                         <input
                           type="text"
-                          placeholder="Paste link: https://suno.com/song/... or https://youtube.com/watch?v=..."
+                          placeholder="Paste YouTube link (e.g. https://www.youtube.com/watch?v=...)"
                           value={newYoutubeUrl}
                           onChange={(e) => setNewYoutubeUrl(e.target.value)}
                           className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white focus:border-amber-500 outline-none text-xs"

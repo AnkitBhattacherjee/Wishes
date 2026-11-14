@@ -27,7 +27,7 @@ import {
   saveGiftProject,
   uploadGiftFile,
 } from "../giftStore";
-import { extractSunoAudioUrl, resolveSunoAudioUrl, isSunoUrl, isVideoMedia } from "../utils/audioUtils";
+import { extractYouTubeId, extractSunoAudioUrl, isVideoMedia } from "../utils/audioUtils";
 import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFont";
 import { MailboxModal } from "./MailboxModal";
 import { ShareModal } from "./ShareModal";
@@ -359,21 +359,21 @@ export default function RoomPage() {
     roomLetterContainerRef
   );
 
-  // ── Birthday Song Audio/Video Player State ──
+  // ── Birthday Song Audio/YouTube Player State ──
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const defaultSongTitle = `Birthday Waltz for ${name}`;
+  const [youtubeId, setYoutubeId] = useState<string | null>(project.customSongYoutubeId || null);
+  const [youtubeInput, setYoutubeInput] = useState<string>("");
   const [songUrl, setSongUrl] = useState<string>(project.customSongUrl || defaultBirthdaySong);
   const [songTitle, setSongTitle] = useState<string>(project.customSongName || defaultSongTitle);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
   const [showMusicMenu, setShowMusicMenu] = useState<boolean>(false);
-  const [sunoInput, setSunoInput] = useState<string>("");
   const [isUploadingSong, setIsUploadingSong] = useState<boolean>(false);
-  const [isResolvingSuno, setIsResolvingSuno] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   // Active cake preview
@@ -381,14 +381,27 @@ export default function RoomPage() {
   const currentCake = cakes.find((c) => c.id === activeCakeKey) || cakes[0];
   const currentRoomImage = currentCake.roomSrc;
 
-  // Active media helper (handles both audio elements and native video streams for Suno)
-  const getActiveMedia = (): HTMLMediaElement | null => {
-    return isVideoMedia(songUrl) ? videoRef.current : audioRef.current;
+  // Send command to background YouTube iframe via postMessage
+  const sendYtCommand = (func: "playVideo" | "pauseVideo" | "mute" | "unMute") => {
+    if (ytIframeRef.current?.contentWindow) {
+      ytIframeRef.current.contentWindow.postMessage(
+        JSON.stringify({ event: "command", func, args: [] }),
+        "*"
+      );
+    }
   };
 
   // Play audio safely handling browser autoplay policies
   const startAudioPlayback = () => {
-    const media = getActiveMedia();
+    if (youtubeId) {
+      sendYtCommand("unMute");
+      sendYtCommand("playVideo");
+      setIsPlaying(true);
+      setIsAutoplayBlocked(false);
+      setIsMuted(false);
+      return;
+    }
+    const media = audioRef.current;
     if (!media) return;
     media.muted = false;
     setIsMuted(false);
@@ -405,7 +418,15 @@ export default function RoomPage() {
 
   // Attempt playback on mount
   useEffect(() => {
-    const media = getActiveMedia();
+    if (youtubeId) {
+      setTimeout(() => {
+        sendYtCommand("unMute");
+        sendYtCommand("playVideo");
+        setIsPlaying(true);
+      }, 1000);
+      return;
+    }
+    const media = audioRef.current;
     if (!media) return;
 
     // Try playing
@@ -417,11 +438,10 @@ export default function RoomPage() {
           setIsAutoplayBlocked(false);
         })
         .catch(() => {
-          // Autoplay blocked by browser policy without user gesture
           setIsAutoplayBlocked(true);
         });
     }
-  }, [songUrl]);
+  }, [songUrl, youtubeId]);
 
   // Global user gesture listener: first click anywhere starts audio if blocked
   useEffect(() => {
@@ -435,10 +455,20 @@ export default function RoomPage() {
     return () => {
       window.removeEventListener("pointerdown", handleFirstUserInteraction);
     };
-  }, [isAutoplayBlocked, songUrl]);
+  }, [isAutoplayBlocked, songUrl, youtubeId]);
 
   const togglePlay = () => {
-    const media = getActiveMedia();
+    if (youtubeId) {
+      if (isPlaying) {
+        sendYtCommand("pauseVideo");
+        setIsPlaying(false);
+      } else {
+        sendYtCommand("playVideo");
+        setIsPlaying(true);
+      }
+      return;
+    }
+    const media = audioRef.current;
     if (!media) return;
     if (isPlaying) {
       media.pause();
@@ -449,9 +479,14 @@ export default function RoomPage() {
   };
 
   const toggleMute = () => {
-    const media = getActiveMedia();
-    if (!media) return;
     const nextMute = !isMuted;
+    if (youtubeId) {
+      sendYtCommand(nextMute ? "mute" : "unMute");
+      setIsMuted(nextMute);
+      return;
+    }
+    const media = audioRef.current;
+    if (!media) return;
     media.muted = nextMute;
     setIsMuted(nextMute);
   };
@@ -470,10 +505,12 @@ export default function RoomPage() {
     try {
       const publicUrl = await uploadGiftFile(file, file.type || "audio/mpeg");
       const fileName = file.name.replace(/\.[^/.]+$/, "");
+      setYoutubeId(null);
       setSongUrl(publicUrl);
       setSongTitle(fileName);
       const next = saveGiftProject({
         ...project,
+        customSongYoutubeId: null,
         customSongUrl: publicUrl,
         customSongName: fileName,
       });
@@ -482,9 +519,8 @@ export default function RoomPage() {
       setShowMusicMenu(false);
 
       setTimeout(() => {
-        const media = isVideoMedia(publicUrl) ? videoRef.current : audioRef.current;
-        if (media) {
-          media.load();
+        if (audioRef.current) {
+          audioRef.current.load();
           startAudioPlayback();
         }
       }, 250);
@@ -497,56 +533,39 @@ export default function RoomPage() {
     }
   };
 
-  const handleApplySunoSong = async () => {
-    if (!sunoInput.trim()) return;
-    const input = sunoInput.trim();
+  const handleApplyYoutubeSong = () => {
+    const input = youtubeInput.trim();
+    if (!input) return;
 
-    // If it's a Suno web link, Suno blocks hotlinking and encrypts raw stream chunks
-    if (isSunoUrl(input)) {
-      alert(
-        "🎵 Suno AI Link Detected!\n\n" +
-        "Suno encrypts its live browser streams with DRM to prevent hotlinking.\n\n" +
-        "✨ Quick 5-Second Solution:\n" +
-        "1. In Suno, click the three dots (...) next to your song\n" +
-        "2. Click Download ➔ Audio (downloads the MP3 file)\n" +
-        "3. Click the pink 'Upload MP3 (Suno Download)' button right below!\n\n" +
-        "Your song will be saved to Supabase cloud storage and guaranteed to play on all mobile & desktop devices!"
-      );
+    const ytId = extractYouTubeId(input);
+    if (!ytId) {
+      alert("Please enter a valid YouTube link (e.g. https://www.youtube.com/watch?v=... or https://youtu.be/...)");
       return;
     }
 
-    // Direct audio URL (.mp3, .wav, .ogg, .m4a)
-    const directUrl = extractSunoAudioUrl(input);
-    if (!directUrl) {
-      alert("Please enter a direct audio link (.mp3, .wav) or click 'Upload MP3' below to upload your song!");
-      return;
-    }
-
-    const title = `Celebration Song for ${name} 🎵`;
-    setSongUrl(directUrl);
+    const title = `YouTube Song for ${name} 🎵`;
+    setYoutubeId(ytId);
     setSongTitle(title);
     const next = saveGiftProject({
       ...project,
-      customSongUrl: directUrl,
+      customSongYoutubeId: ytId,
+      customSongUrl: null,
       customSongName: title,
     });
     setProject(next);
     persistGiftProject(next).catch(() => {});
     setShowMusicMenu(false);
-    setSunoInput("");
-    setTimeout(() => {
-      if (audioRef.current) {
-        audioRef.current.load();
-        startAudioPlayback();
-      }
-    }, 200);
+    setYoutubeInput("");
+    setIsPlaying(true);
   };
 
   const handleResetSong = () => {
+    setYoutubeId(null);
     setSongUrl(defaultBirthdaySong);
     setSongTitle(defaultSongTitle);
     const next = saveGiftProject({
       ...project,
+      customSongYoutubeId: null,
       customSongUrl: null,
       customSongName: null,
     });
@@ -656,28 +675,34 @@ export default function RoomPage() {
 
   return (
     <div className="relative w-full h-screen bg-[#1c1417] overflow-hidden select-none flex items-center justify-center">
-      {/* ── Background Audio & Video Media Elements (100% Cross-Browser Support) ── */}
-      <audio
-        ref={audioRef}
-        src={!isVideoMedia(songUrl) ? songUrl : undefined}
-        loop
-        playsInline
-        preload="auto"
-        muted={isMuted}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-      />
-      <video
-        ref={videoRef}
-        src={isVideoMedia(songUrl) ? songUrl : undefined}
-        loop
-        playsInline
-        preload="auto"
-        muted={isMuted}
-        style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-      />
+      {/* ── Background Audio & YouTube Players (100% Zero-Redirect Cross-Browser Playback) ── */}
+      {youtubeId ? (
+        <iframe
+          ref={ytIframeRef}
+          src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&enablejsapi=1&playsinline=1&loop=1&playlist=${youtubeId}&controls=0`}
+          title="Background Birthday Music"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
+          onLoad={() => {
+            setTimeout(() => {
+              sendYtCommand("unMute");
+              sendYtCommand("playVideo");
+              setIsPlaying(true);
+            }, 800);
+          }}
+        />
+      ) : (
+        <audio
+          ref={audioRef}
+          src={songUrl}
+          loop
+          playsInline
+          preload="auto"
+          muted={isMuted}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+        />
+      )}
 
       {/* Hidden file input for uploading custom MP3 to Supabase */}
       <input
@@ -876,39 +901,53 @@ export default function RoomPage() {
                     This song plays in the background when your beloved one opens the birthday room!
                   </p>
 
-                  {/* Suno AI Song Link / Audio URL Input */}
-                  <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-white/5 border border-pink-400/25">
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-pink-300">
-                      <Sparkles size={13} className="text-pink-400" />
-                      <span>Suno AI Song Link / Audio URL</span>
+                  {/* YouTube Song Link Section */}
+                  <div className="flex flex-col gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-red-300">
+                      <Music size={13} className="text-red-400" />
+                      <span>YouTube Song Link (Plays in Background)</span>
                     </div>
                     <p className="text-[10px] text-white/60">
-                      Paste your Suno link (e.g. <span className="text-pink-300 font-mono">suno.com/song/...</span>). Plays in background with zero redirect & no login!
+                      Paste any YouTube link (e.g. <span className="text-red-300 font-mono">youtube.com/watch?v=...</span>). Plays automatically in the background without redirecting!
                     </p>
                     <div className="flex gap-1.5 mt-0.5">
                       <input
                         type="text"
-                        placeholder="Paste Suno link (suno.com/song/...)"
-                        value={sunoInput}
-                        onChange={(e) => setSunoInput(e.target.value)}
+                        placeholder="Paste YouTube link (youtube.com/watch?v=...)"
+                        value={youtubeInput}
+                        onChange={(e) => setYoutubeInput(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleApplySunoSong();
+                          if (e.key === "Enter") handleApplyYoutubeSong();
                         }}
-                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/20 text-[11px] text-white placeholder-white/40 outline-none focus:border-pink-400"
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/20 text-[11px] text-white placeholder-white/40 outline-none focus:border-red-400"
                       />
                       <button
-                        onClick={handleApplySunoSong}
-                        disabled={isResolvingSuno}
-                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95 disabled:opacity-50"
+                        onClick={handleApplyYoutubeSong}
+                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95"
                       >
-                        {isResolvingSuno ? "Loading... ⏳" : "Play & Save"}
+                        Play & Save
                       </button>
                     </div>
+
+                    {/* Live YouTube Preview */}
+                    {extractYouTubeId(youtubeInput) && (
+                      <div className="flex items-center gap-2.5 p-2 rounded-lg bg-black/40 border border-red-400/20 mt-0.5">
+                        <img
+                          src={`https://img.youtube.com/vi/${extractYouTubeId(youtubeInput)}/mqdefault.jpg`}
+                          alt="Video thumbnail"
+                          className="w-14 h-9 object-cover rounded shadow-xs"
+                        />
+                        <div className="flex flex-col text-left">
+                          <span className="text-[10.5px] font-bold text-red-200">YouTube Video Connected! 🎵</span>
+                          <span className="text-[9px] text-white/50">Ready to stream in room background</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 my-0.5">
                     <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR BEST RELIABILITY</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR UPLOAD LOCAL AUDIO</span>
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
 
@@ -922,7 +961,7 @@ export default function RoomPage() {
                       <Upload size={14} className="text-pink-300" />
                       <div className="flex flex-col">
                         <span className="text-xs font-semibold text-pink-200">
-                          {isUploadingSong ? "Uploading to Cloud... ⏳" : "Upload MP3 (Suno Download)"}
+                          {isUploadingSong ? "Uploading to Cloud... ⏳" : "Upload MP3 or Audio File"}
                         </span>
                         <span className="text-[9px] text-white/50">
                           Saved to Supabase storage • Guaranteed to play on all mobile & desktop browsers
@@ -931,9 +970,16 @@ export default function RoomPage() {
                     </div>
                   </button>
 
-                  <div className="p-2 rounded-lg bg-black/30 border border-white/10 text-[9.5px] text-white/60 leading-relaxed">
-                    💡 <span className="text-pink-300 font-semibold">Pro Tip:</span> On Suno, click the three dots (<span className="text-white font-bold">...</span>) next to your track ➔ <span className="text-white font-bold">Download</span> ➔ <span className="text-white font-bold">Audio</span>, then upload the file here!
-                  </div>
+                  {/* Reset to default song */}
+                  {(youtubeId || project.customSongUrl) && (
+                    <button
+                      onClick={handleResetSong}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white/80 transition-colors cursor-pointer text-left"
+                    >
+                      <RotateCcw size={14} />
+                      <span>Reset to Birthday Waltz</span>
+                    </button>
+                  )}
 
                   {/* Reset to default song */}
                   {project.customSongUrl && (

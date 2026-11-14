@@ -120,6 +120,7 @@ export type GiftProject = {
   letterFont?: "caveat" | "dancing" | "playfair" | null;
   customSongUrl?: string | null;
   customSongName?: string | null;
+  customSongYoutubeId?: string | null;
   mailboxTheme?: MailboxTheme;
   mailboxItems?: MailboxBubbleItem[];
   isSealed?: boolean;
