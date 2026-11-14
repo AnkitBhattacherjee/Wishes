@@ -1,0 +1,11 @@
+import imgImage12 from "figma:asset/d306c02d571a5d3f96518d0c99cb0ed13e241122.png";
+
+export default function Desktop() {
+  return (
+    <div className="bg-black relative size-full" data-name="Desktop - 18">
+      <div className="-translate-x-1/2 absolute h-[1062px] left-[calc(50%-28.5px)] top-0 w-[1593px]" data-name="image 12">
+        <img alt="" className="absolute inset-0 max-w-none object-cover pointer-events-none size-full" src={imgImage12} />
+      </div>
+    </div>
+  );
+}

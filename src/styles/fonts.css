@@ -1,0 +1,13 @@
+@import url("https://fonts.googleapis.com/css2?family=Alex+Brush&family=Caveat:wght@400;600;700&family=Dancing+Script:wght@500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Alkatra&family=DM+Mono:wght@400;500&family=Instrument+Serif&family=Judson:wght@400;700&family=Poppins:wght@300;400;500;600&display=swap");
+
+@font-face {
+  font-family: "Instrument Serif:Regular";
+  src: local("Instrument Serif");
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Judson:Regular";
+  src: local("Judson");
+  font-weight: 400;
+}

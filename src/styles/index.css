@@ -1,0 +1,19 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+/* Real letter parchment scrollbar */
+.letter-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.letter-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.letter-scroll::-webkit-scrollbar-thumb {
+  background: rgba(196, 88, 122, 0.25);
+  border-radius: 9999px;
+}
+.letter-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(196, 88, 122, 0.45);
+}
+
