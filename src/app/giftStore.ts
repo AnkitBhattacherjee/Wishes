@@ -240,19 +240,32 @@ function decodeSharedProject(value: string): GiftProject | null {
 export function loadGiftProject(): GiftProject {
   let shared: string | null = null;
   let editParam: string | null = null;
+  let isReceiverView = false;
+
   if (typeof window !== "undefined") {
     const searchParams = new URLSearchParams(window.location.search);
     shared = searchParams.get("gift");
     editParam = searchParams.get("edit");
+    isReceiverView = searchParams.get("view") === "receiver";
+
     if (window.location.hash.includes("?")) {
       const hashQuery = window.location.hash.substring(window.location.hash.indexOf("?"));
       const hashParams = new URLSearchParams(hashQuery);
       if (!shared) shared = hashParams.get("gift");
       if (!editParam) editParam = hashParams.get("edit");
+      if (!isReceiverView) isReceiverView = hashParams.get("view") === "receiver";
     }
   }
 
-  if (shared) {
+  // Load existing local project if present
+  let localSaved: GiftProject | null = null;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) localSaved = normalize(JSON.parse(saved));
+  } catch {}
+
+  // If explicitly viewing as receiver, decode the shared token from the link
+  if (shared && isReceiverView) {
     const looksLikeId = /^[0-9a-f-]{30,40}$/i.test(shared);
     if (!looksLikeId) {
       const decoded = decodeSharedProject(shared);
@@ -266,27 +279,34 @@ export function loadGiftProject(): GiftProject {
         return decoded;
       }
     }
-    try {
-      const cached = localStorage.getItem(STORAGE_KEY);
-      const parsed = cached ? normalize(JSON.parse(cached)) : null;
-      if (parsed?.projectId === shared) {
-        if (editParam && !parsed.editToken) {
-          parsed.editToken = editParam;
-        }
-        return parsed;
+  }
+
+  // For sender / creator: localSaved is the primary source of truth!
+  // It holds all your newly uploaded songs, photos, and current edits across page refreshes.
+  if (localSaved) {
+    if (editParam && !localSaved.editToken) {
+      localSaved.editToken = editParam;
+    }
+    return localSaved;
+  }
+
+  // If no local project exists yet, decode from shared link if available
+  if (shared) {
+    const looksLikeId = /^[0-9a-f-]{30,40}$/i.test(shared);
+    if (!looksLikeId) {
+      const decoded = decodeSharedProject(shared);
+      if (decoded) {
+        if (editParam) decoded.editToken = editParam;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
+        } catch {}
+        return decoded;
       }
-    } catch {
-      // Continue with a public cloud placeholder.
     }
     return { ...emptyProject(), projectId: shared, editToken: editParam || "" };
   }
 
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? normalize(JSON.parse(saved)) : emptyProject();
-  } catch {
-    return emptyProject();
-  }
+  return emptyProject();
 }
 
 export function saveGiftProject(project: GiftProject) {
@@ -299,6 +319,14 @@ export function saveGiftProject(project: GiftProject) {
       const sanitized = { ...next };
       if (sanitized.customSongUrl && sanitized.customSongUrl.startsWith("data:")) {
         sanitized.customSongUrl = "idb:room_custom_song";
+      }
+      if (sanitized.mailboxItems) {
+        sanitized.mailboxItems = sanitized.mailboxItems.map((item) => {
+          if (item.photoUrl && item.photoUrl.startsWith("data:") && item.photoUrl.length > 50000) {
+            return { ...item, photoUrl: "" };
+          }
+          return item;
+        });
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
     } catch {

@@ -369,7 +369,12 @@ export default function RoomPage() {
   const defaultSongTitle = `Birthday Waltz for ${name}`;
   const [youtubeId, setYoutubeId] = useState<string | null>(project.customSongYoutubeId || null);
   const [youtubeInput, setYoutubeInput] = useState<string>("");
-  const [songUrl, setSongUrl] = useState<string>(project.customSongUrl || defaultBirthdaySong);
+  const [songUrl, setSongUrl] = useState<string>(() => {
+    if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+      return project.customSongUrl;
+    }
+    return defaultBirthdaySong;
+  });
   const [songTitle, setSongTitle] = useState<string>(project.customSongName || defaultSongTitle);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -424,21 +429,39 @@ export default function RoomPage() {
       });
   };
 
-  // Synchronize song state whenever project custom song properties update
+  // Synchronize song state whenever project custom song properties update or on refresh
   useEffect(() => {
-    if (project.customSongUrl === "idb:room_custom_song") {
-      getAudioObjectUrl("room_custom_song").then((blobUrl) => {
-        if (blobUrl) setSongUrl(blobUrl);
-      });
-    } else if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+    let isCancelled = false;
+
+    // 1. If project has a direct cloud / Supabase URL, use it immediately
+    if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
       setSongUrl(project.customSongUrl);
       setYoutubeId(null);
+      if (audioRef.current) {
+        audioRef.current.load();
+      }
     } else if (project.customSongYoutubeId) {
       setYoutubeId(project.customSongYoutubeId);
+    } else {
+      // 2. Fetch locally saved / cached audio from IndexedDB across page refreshes
+      getAudioObjectUrl("room_custom_song").then((blobUrl) => {
+        if (!isCancelled && blobUrl) {
+          setSongUrl(blobUrl);
+          setYoutubeId(null);
+          if (audioRef.current) {
+            audioRef.current.load();
+          }
+        }
+      });
     }
+
     if (project.customSongName) {
       setSongTitle(project.customSongName);
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [project.customSongUrl, project.customSongYoutubeId, project.customSongName]);
 
   useEffect(() => {
