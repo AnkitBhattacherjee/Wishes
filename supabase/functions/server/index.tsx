@@ -150,7 +150,7 @@ const handleFileUpload = async (c: any) => {
       return c.json({ error: "This edit link is not authorized" }, 403);
     }
 
-    const match = /^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl || "");
+    const match = /^data:((?:image|audio|video)\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl || "");
     if (!match) return c.json({ error: "Invalid file format (must be image or audio)" }, 400);
 
     const supabase = storageClient();
@@ -161,7 +161,7 @@ const handleFileUpload = async (c: any) => {
         fileSizeLimit: 15 * 1024 * 1024,
         allowedMimeTypes: [
           "image/webp", "image/jpeg", "image/png", "image/gif",
-          "audio/webm", "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/m4a"
+          "audio/webm", "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/m4a", "audio/x-m4a", "audio/mp4", "video/mp4"
         ],
       });
       if (error && !error.message.toLowerCase().includes("already exists")) throw error;
@@ -177,6 +177,7 @@ const handleFileUpload = async (c: any) => {
     else if (mime.includes("mpeg") || mime.includes("mp3")) extension = "mp3";
     else if (mime.includes("wav")) extension = "wav";
     else if (mime.includes("ogg")) extension = "ogg";
+    else if (mime.includes("m4a") || mime.includes("mp4")) extension = "mp4";
 
     const binary = Uint8Array.from(atob(match[2]), (char) => char.charCodeAt(0));
     const path = `${id}/${crypto.randomUUID()}.${extension}`;
@@ -223,6 +224,42 @@ app.post(`${PREFIX}/cleanup`, async (c) => {
   } catch (error) {
     console.error("Cleanup sweep failed", error);
     return c.json({ error: "Cleanup failed" }, 500);
+  }
+});
+
+/**
+ * Suno AI Song Resolver: Follows short links or parses track URLs
+ * and returns the direct .mp4 audio stream with open CORS.
+ */
+app.get(`${PREFIX}/resolve-suno`, async (c) => {
+  const url = c.req.query("url");
+  if (!url) return c.json({ error: "Missing url parameter" }, 400);
+
+  try {
+    const res = await fetch(url, { redirect: "follow" });
+    const finalUrl = res.url;
+    const uuidMatch = finalUrl.match(/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i);
+    if (uuidMatch && uuidMatch[1]) {
+      return c.json({
+        success: true,
+        uuid: uuidMatch[1],
+        streamUrl: `https://cdn1.suno.ai/${uuidMatch[1]}.mp4`,
+      });
+    }
+
+    // Try finding stream inside the page HTML
+    const html = await res.text();
+    const clipMatch = html.match(/https:\/\/[^"']+\.(mp4|m4a)/);
+    if (clipMatch) {
+      return c.json({
+        success: true,
+        streamUrl: clipMatch[0],
+      });
+    }
+
+    return c.json({ error: "Could not find audio for this Suno link" }, 404);
+  } catch (err) {
+    return c.json({ error: "Failed to resolve Suno link: " + String(err) }, 500);
   }
 });
 

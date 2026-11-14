@@ -25,8 +25,9 @@ import {
   loadGiftProject,
   persistGiftProject,
   saveGiftProject,
+  uploadGiftFile,
 } from "../giftStore";
-import { extractSunoAudioUrl, isSunoUrl } from "../utils/audioUtils";
+import { extractSunoAudioUrl, isSunoUrl, isVideoMedia } from "../utils/audioUtils";
 import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFont";
 import { MailboxModal } from "./MailboxModal";
 import { ShareModal } from "./ShareModal";
@@ -358,8 +359,9 @@ export default function RoomPage() {
     roomLetterContainerRef
   );
 
-  // ── Birthday Song Audio Player State ──
+  // ── Birthday Song Audio/Video Player State ──
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const defaultSongTitle = `Birthday Waltz for ${name}`;
@@ -370,6 +372,7 @@ export default function RoomPage() {
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
   const [showMusicMenu, setShowMusicMenu] = useState<boolean>(false);
   const [sunoInput, setSunoInput] = useState<string>("");
+  const [isUploadingSong, setIsUploadingSong] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   // Active cake preview
@@ -377,13 +380,18 @@ export default function RoomPage() {
   const currentCake = cakes.find((c) => c.id === activeCakeKey) || cakes[0];
   const currentRoomImage = currentCake.roomSrc;
 
+  // Active media helper (handles both audio elements and native video streams for Suno)
+  const getActiveMedia = (): HTMLMediaElement | null => {
+    return isVideoMedia(songUrl) ? videoRef.current : audioRef.current;
+  };
+
   // Play audio safely handling browser autoplay policies
   const startAudioPlayback = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.muted = false;
+    const media = getActiveMedia();
+    if (!media) return;
+    media.muted = false;
     setIsMuted(false);
-    audio
+    media
       .play()
       .then(() => {
         setIsPlaying(true);
@@ -396,11 +404,11 @@ export default function RoomPage() {
 
   // Attempt playback on mount
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const media = getActiveMedia();
+    if (!media) return;
 
     // Try playing
-    const playPromise = audio.play();
+    const playPromise = media.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
@@ -412,7 +420,7 @@ export default function RoomPage() {
           setIsAutoplayBlocked(true);
         });
     }
-  }, []);
+  }, [songUrl]);
 
   // Global user gesture listener: first click anywhere starts audio if blocked
   useEffect(() => {
@@ -426,13 +434,13 @@ export default function RoomPage() {
     return () => {
       window.removeEventListener("pointerdown", handleFirstUserInteraction);
     };
-  }, [isAutoplayBlocked]);
+  }, [isAutoplayBlocked, songUrl]);
 
   const togglePlay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const media = getActiveMedia();
+    if (!media) return;
     if (isPlaying) {
-      audio.pause();
+      media.pause();
       setIsPlaying(false);
     } else {
       startAudioPlayback();
@@ -440,49 +448,52 @@ export default function RoomPage() {
   };
 
   const toggleMute = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const media = getActiveMedia();
+    if (!media) return;
     const nextMute = !isMuted;
-    audio.muted = nextMute;
+    media.muted = nextMute;
     setIsMuted(nextMute);
   };
 
-  // Upload Custom Song (MP3 / Audio)
-  const handleUploadCustomSong = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload Custom Song (MP3 / Audio) to Supabase Storage
+  const handleUploadCustomSong = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Check size under 8MB
-    if (file.size > 8 * 1024 * 1024) {
-      alert("Audio file is larger than 8MB. Please select a smaller MP3 or audio file.");
+    if (file.size > 15 * 1024 * 1024) {
+      alert("Audio file is larger than 15MB. Please select a smaller MP3 or audio file.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (uploadEvent) => {
-      const dataUrl = uploadEvent.target?.result as string;
-      if (dataUrl) {
-        setSongUrl(dataUrl);
-        const fileName = file.name.replace(/\.[^/.]+$/, "");
-        setSongTitle(fileName);
-        const next = saveGiftProject({
-          ...project,
-          customSongUrl: dataUrl,
-          customSongName: fileName,
-        });
-        setProject(next);
-        setShowMusicMenu(false);
+    setIsUploadingSong(true);
+    try {
+      const publicUrl = await uploadGiftFile(file, file.type || "audio/mpeg");
+      const fileName = file.name.replace(/\.[^/.]+$/, "");
+      setSongUrl(publicUrl);
+      setSongTitle(fileName);
+      const next = saveGiftProject({
+        ...project,
+        customSongUrl: publicUrl,
+        customSongName: fileName,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
+      setShowMusicMenu(false);
 
-        // Play uploaded song
-        setTimeout(() => {
-          if (audioRef.current) {
-            audioRef.current.load();
-            startAudioPlayback();
-          }
-        }, 150);
-      }
-    };
-    reader.readAsDataURL(file);
+      setTimeout(() => {
+        const media = isVideoMedia(publicUrl) ? videoRef.current : audioRef.current;
+        if (media) {
+          media.load();
+          startAudioPlayback();
+        }
+      }, 250);
+    } catch (err) {
+      console.error("Audio upload failed:", err);
+      alert("Failed to upload audio file to cloud storage. Please try again.");
+    } finally {
+      setIsUploadingSong(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   const handleApplySunoSong = () => {
@@ -502,14 +513,16 @@ export default function RoomPage() {
       customSongName: title,
     });
     setProject(next);
+    persistGiftProject(next).catch(() => {});
     setShowMusicMenu(false);
     setSunoInput("");
     setTimeout(() => {
-      if (audioRef.current) {
-        audioRef.current.load();
+      const media = isVideoMedia(directUrl) ? videoRef.current : audioRef.current;
+      if (media) {
+        media.load();
         startAudioPlayback();
       }
-    }, 150);
+    }, 250);
   };
 
   const handleResetSong = () => {
@@ -521,6 +534,7 @@ export default function RoomPage() {
       customSongName: null,
     });
     setProject(next);
+    persistGiftProject(next).catch(() => {});
     setShowMusicMenu(false);
     setTimeout(() => {
       if (audioRef.current) {
@@ -625,18 +639,30 @@ export default function RoomPage() {
 
   return (
     <div className="relative w-full h-screen bg-[#1c1417] overflow-hidden select-none flex items-center justify-center">
-      {/* ── Native Audio Element ── */}
+      {/* ── Background Audio & Video Media Elements (100% Cross-Browser Support) ── */}
       <audio
         ref={audioRef}
-        src={songUrl}
+        src={!isVideoMedia(songUrl) ? songUrl : undefined}
         loop
         playsInline
         preload="auto"
+        muted={isMuted}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+      />
+      <video
+        ref={videoRef}
+        src={isVideoMedia(songUrl) ? songUrl : undefined}
+        loop
+        playsInline
+        preload="auto"
+        muted={isMuted}
+        style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* Hidden file input for uploading custom MP3 */}
+      {/* Hidden file input for uploading custom MP3 to Supabase */}
       <input
         ref={fileInputRef}
         type="file"
@@ -840,12 +866,12 @@ export default function RoomPage() {
                       <span>Suno AI Song Link / Audio URL</span>
                     </div>
                     <p className="text-[10px] text-white/60">
-                      Paste a Suno link (e.g. <span className="text-pink-300">suno.com/song/...</span>). Plays in background with 0 redirect & no login!
+                      Paste your Suno link (e.g. <span className="text-pink-300 font-mono">suno.com/song/...</span>). Plays in background with zero redirect & no login!
                     </p>
                     <div className="flex gap-1.5 mt-0.5">
                       <input
                         type="text"
-                        placeholder="Paste Suno AI link..."
+                        placeholder="Paste Suno link (suno.com/song/...)"
                         value={sunoInput}
                         onChange={(e) => setSunoInput(e.target.value)}
                         onKeyDown={(e) => {
@@ -855,7 +881,7 @@ export default function RoomPage() {
                       />
                       <button
                         onClick={handleApplySunoSong}
-                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-[10px] cursor-pointer shadow-md"
+                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95"
                       >
                         Play & Save
                       </button>
@@ -864,18 +890,32 @@ export default function RoomPage() {
 
                   <div className="flex items-center gap-2 my-0.5">
                     <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR BEST RELIABILITY</span>
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
 
-                  {/* Upload custom MP3 */}
+                  {/* Upload custom MP3 (saved to Supabase 2-day backup) */}
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white/90 transition-colors cursor-pointer text-left font-medium"
+                    disabled={isUploadingSong}
+                    className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 border border-pink-500/30 text-white/90 transition-all cursor-pointer text-left font-medium disabled:opacity-50"
                   >
-                    <Upload size={14} className="text-pink-300" />
-                    <span>Upload Local MP3 Audio</span>
+                    <div className="flex items-center gap-2">
+                      <Upload size={14} className="text-pink-300" />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-semibold text-pink-200">
+                          {isUploadingSong ? "Uploading to Cloud... ⏳" : "Upload MP3 (Suno Download)"}
+                        </span>
+                        <span className="text-[9px] text-white/50">
+                          Saved to Supabase storage • Guaranteed to play on all mobile & desktop browsers
+                        </span>
+                      </div>
+                    </div>
                   </button>
+
+                  <div className="p-2 rounded-lg bg-black/30 border border-white/10 text-[9.5px] text-white/60 leading-relaxed">
+                    💡 <span className="text-pink-300 font-semibold">Pro Tip:</span> On Suno, click the three dots (<span className="text-white font-bold">...</span>) next to your track ➔ <span className="text-white font-bold">Download</span> ➔ <span className="text-white font-bold">Audio</span>, then upload the file here!
+                  </div>
 
                   {/* Reset to default song */}
                   {project.customSongUrl && (

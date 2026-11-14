@@ -20,35 +20,47 @@ export function isSunoUrl(url: string): boolean {
 }
 
 /**
+ * Checks if the media URL is an MP4/video stream (such as Suno AI's CDN)
+ * which requires a video container element for 100% native hardware audio decoding.
+ */
+export function isVideoMedia(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return /\.mp4(?:\?.*)?$/i.test(url) || /cdn\d*\.suno\.ai/i.test(url);
+}
+
+/**
  * Converts a Suno AI song URL (or direct CDN/audio URL) into a direct,
- * cross-origin playable MP3 audio stream that requires NO login and NO redirect.
+ * cross-origin playable audio stream that requires NO login and NO redirect.
+ *
+ * NOTE: Suno returns 403 Forbidden on direct .mp3 links, but serves the full
+ * pristine audio stream with open CORS on its corresponding .mp4 stream!
  */
 export function extractSunoAudioUrl(input: string): string | null {
   if (!input) return null;
   const trimmed = input.trim();
 
-  // Already a direct Suno CDN link
-  if (/^https?:\/\/(?:cdn1|audiopipe)\.suno\.ai\/.+\.mp3$/i.test(trimmed)) {
+  // Any Suno 36-char UUID (found in suno.com/song/[UUID], suno.com/create?song=[UUID], etc.)
+  const uuidMatch = trimmed.match(/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i);
+  if (uuidMatch && uuidMatch[1]) {
+    // Return direct MP4 stream which contains full audio and open CORS (200 OK)
+    return `https://cdn1.suno.ai/${uuidMatch[1]}.mp4`;
+  }
+
+  // Already a direct Suno CDN mp4 link
+  if (/^https?:\/\/(?:cdn\d*|audiopipe)\.suno\.ai\/.+\.mp4$/i.test(trimmed)) {
     return trimmed;
   }
 
-  // Standard Suno song share link: https://suno.com/song/[UUID] or https://app.suno.ai/song/[UUID]
-  const songMatch = trimmed.match(/(?:suno\.com|suno\.ai)\/song\/([0-9a-fA-F-]{32,36})/i);
-  if (songMatch && songMatch[1]) {
-    return `https://cdn1.suno.ai/${songMatch[1]}.mp3`;
+  // If user pasted a cdn1.suno.ai/...mp3 link, convert to .mp4 to avoid 403 Forbidden
+  const cdnMp3Match = trimmed.match(/^https?:\/\/(?:cdn\d*|audiopipe)\.suno\.ai\/(.+)\.mp3$/i);
+  if (cdnMp3Match && cdnMp3Match[1]) {
+    return `https://cdn1.suno.ai/${cdnMp3Match[1]}.mp4`;
   }
 
-  // Short Suno share link: https://suno.com/s/[SHORT-ID]
-  const shortMatch = trimmed.match(/(?:suno\.com|suno\.ai)\/s\/([a-zA-Z0-9_-]+)/i);
-  if (shortMatch && shortMatch[1]) {
-    return `https://cdn1.suno.ai/${shortMatch[1]}.mp3`;
-  }
-
-  // Any direct audio stream link (.mp3, .wav, .ogg, .m4a)
-  if (/^https?:\/\/.+\.(mp3|wav|ogg|m4a)(?:\?.*)?$/i.test(trimmed)) {
+  // Any direct audio stream link (.mp3, .wav, .ogg, .m4a, .mp4)
+  if (/^https?:\/\/.+\.(mp3|wav|ogg|m4a|mp4)(?:\?.*)?$/i.test(trimmed)) {
     return trimmed;
   }
 
   return null;
 }
-

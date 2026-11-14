@@ -30,6 +30,7 @@ import {
   extractYouTubeId,
   extractSunoAudioUrl,
   isSunoUrl,
+  isVideoMedia,
 } from "../utils/audioUtils";
 import {
   PutulKhelaStage,
@@ -161,7 +162,12 @@ export function MailboxModal({
   // Audio / YouTube Playback
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
   const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const getActiveMedia = (): HTMLMediaElement | null => {
+    return isVideoMedia(activeItem?.audioUrl) ? videoPlayerRef.current : audioPlayerRef.current;
+  };
 
   // Creator Modal State
   const [isAdding, setIsAdding] = useState(false);
@@ -837,15 +843,28 @@ export function MailboxModal({
                           </div>
                         ) : activeItem.audioUrl ? (
                           <div className="flex flex-col items-center gap-2.5 w-full py-2.5 px-3.5 rounded-2xl bg-black/50 border border-amber-400/50 shadow-inner">
-                            <audio
-                              ref={audioPlayerRef}
-                              src={activeItem.audioUrl}
-                              loop
-                              autoPlay
-                              playsInline
-                              onPlay={() => setIsPlayingAudio(true)}
-                              onPause={() => setIsPlayingAudio(false)}
-                            />
+                            {isVideoMedia(activeItem.audioUrl) ? (
+                              <video
+                                ref={videoPlayerRef}
+                                src={activeItem.audioUrl}
+                                loop
+                                autoPlay
+                                playsInline
+                                style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1, opacity: 0.001, pointerEvents: "none" }}
+                                onPlay={() => setIsPlayingAudio(true)}
+                                onPause={() => setIsPlayingAudio(false)}
+                              />
+                            ) : (
+                              <audio
+                                ref={audioPlayerRef}
+                                src={activeItem.audioUrl}
+                                loop
+                                autoPlay
+                                playsInline
+                                onPlay={() => setIsPlayingAudio(true)}
+                                onPause={() => setIsPlayingAudio(false)}
+                              />
+                            )}
 
                             {/* Rotating Vinyl & Info */}
                             <div className="flex items-center gap-3 w-full">
@@ -875,12 +894,13 @@ export function MailboxModal({
                               {/* Play / Pause Toggle Button */}
                               <button
                                 onClick={() => {
-                                  if (!audioPlayerRef.current) return;
+                                  const media = getActiveMedia();
+                                  if (!media) return;
                                   if (isPlayingAudio) {
-                                    audioPlayerRef.current.pause();
+                                    media.pause();
                                     setIsPlayingAudio(false);
                                   } else {
-                                    audioPlayerRef.current.play();
+                                    media.play().catch(() => {});
                                     setIsPlayingAudio(true);
                                   }
                                 }}
