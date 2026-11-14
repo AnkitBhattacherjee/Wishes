@@ -677,9 +677,10 @@ export default function WishPage() {
       : null;
   const giftParam = searchParams.get("gift") || hashSearch?.get("gift");
   const editParam = searchParams.get("edit") || hashSearch?.get("edit");
+  const viewParam = searchParams.get("view") || hashSearch?.get("view");
   const isReceiver = Boolean(
     (giftParam && !editParam) ||
-      searchParams.get("view") === "receiver" ||
+      viewParam === "receiver" ||
       (!editParam && project.isSealed && !project.editToken)
   );
 
@@ -871,7 +872,8 @@ export default function WishPage() {
 
   const handleStickerClick = (stickerId: string) => {
     if (stickerId === "birthday-cake") {
-      navigate("/room", {
+      const search = giftParam ? `?gift=${giftParam}&view=receiver` : location.search;
+      navigate(`/room${search}`, {
         state: {
           name,
           occasion,
@@ -1263,20 +1265,25 @@ export default function WishPage() {
         ) : (
           <div
             onClick={() => {
+              if (isReceiver) return;
               setHeaderInput(project.headerTitle || "");
               setIsEditingHeader(true);
             }}
-            className="cursor-pointer group flex flex-col items-center select-none"
-            title="Tap to write a line ✍️"
+            className={`flex flex-col items-center select-none ${
+              !isReceiver ? "cursor-pointer group" : ""
+            }`}
+            title={!isReceiver ? "Tap to write a line ✍️" : undefined}
           >
             <div className="flex items-center justify-center gap-2 px-3 py-1 rounded-2xl hover:bg-white/30 backdrop-blur-xs transition-all">
               <p className="font-['Alex_Brush',cursive] text-[48px] sm:text-[60px] lg:text-[68px] text-[#3a2a2a] select-none leading-none drop-shadow-sm group-hover:text-pink-900 transition-colors">
                 {project.headerTitle?.trim() || "Write Your Wish"}
               </p>
-              <Edit3
-                size={16}
-                className="text-pink-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-              />
+              {!isReceiver && (
+                <Edit3
+                  size={16}
+                  className="text-pink-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                />
+              )}
             </div>
             <motion.div
               className="mx-auto mt-2 rounded-full"
@@ -1297,7 +1304,14 @@ export default function WishPage() {
         className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[460px] max-w-[86vw] cursor-pointer"
         whileHover={{ scale: 1.03, y: -4 }}
         whileTap={{ scale: 0.98 }}
-        onClick={() => setIsFrontWishModalOpen(true)}
+        onClick={() => {
+          if (isReceiver) {
+            setIsModalOpen(true);
+          } else {
+            setIsFrontWishModalOpen(true);
+          }
+        }}
+        title={isReceiver ? "Tap to read full heartfelt letter 💌" : "Tap to edit greeting wish ✍️"}
       >
         <div
           className="rounded-[24px] p-6 sm:p-7 relative overflow-hidden backdrop-blur-md transition-all duration-300 border border-amber-200/70 shadow-[0_20px_50px_rgba(196,88,122,0.18),0_6px_20px_rgba(0,0,0,0.06)] text-center"
@@ -1321,12 +1335,6 @@ export default function WishPage() {
             <p className="font-['Caveat',cursive] text-[24px] sm:text-[28px] leading-relaxed text-[#2d1b22] px-4 select-none">
               "{displayFrontWish}"
             </p>
-
-            <div className="mt-3.5 pt-2 border-t border-[#dfc2c8]/60 w-full flex items-center justify-center text-[11px] font-medium text-[#785460] select-none px-2">
-              <span className="font-bold tracking-widest uppercase text-pink-700/80 text-[10px]">
-                By your special person
-              </span>
-            </div>
           </div>
         </div>
       </motion.div>
@@ -1423,6 +1431,7 @@ export default function WishPage() {
         theme={project.mailboxTheme}
         onThemeChange={(mailboxTheme) => updateProject({ mailboxTheme })}
         projectId={project.projectId}
+        isReceiver={isReceiver}
       />
 
       {/* Interactive User Guide Tour Modal */}

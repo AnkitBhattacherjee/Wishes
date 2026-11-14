@@ -27,6 +27,7 @@ import {
   type MailboxBubbleType,
   type MailboxTheme,
 } from "../giftStore";
+import { uploadImageToCloud } from "../utils/imageCloudUpload";
 import {
   extractYouTubeId,
   extractSunoAudioUrl,
@@ -126,16 +127,22 @@ export function MailboxModal({
   name,
   items: rawItems,
   onUpdateItems,
+  onItemsChange,
   theme = "putulkhela",
   onThemeChange,
+  projectId,
+  isReceiver = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
   name: string;
   items?: MailboxBubbleItem[];
   onUpdateItems?: (items: MailboxBubbleItem[]) => void;
+  onItemsChange?: (items: MailboxBubbleItem[]) => void;
   theme?: MailboxTheme;
   onThemeChange?: (theme: MailboxTheme) => void;
+  projectId?: string;
+  isReceiver?: boolean;
 }) {
   const [internalItems, setInternalItems] = useState<MailboxBubbleItem[]>(() => {
     return rawItems && rawItems.length > 0 ? rawItems : DEFAULT_MAILBOX_ITEMS;
@@ -153,6 +160,9 @@ export function MailboxModal({
     setInternalItems(newItems);
     if (onUpdateItems) {
       onUpdateItems(newItems);
+    }
+    if (onItemsChange) {
+      onItemsChange(newItems);
     }
   };
 
@@ -204,6 +214,9 @@ export function MailboxModal({
   const [editCardSender, setEditCardSender] = useState("");
   const [editCardMessage, setEditCardMessage] = useState("");
   const [editCardEmoji, setEditCardEmoji] = useState("💌");
+  const [editCardPhotoUrl, setEditCardPhotoUrl] = useState("");
+  const [isUploadingEditPhoto, setIsUploadingEditPhoto] = useState(false);
+  const editCardPhotoInputRef = useRef<HTMLInputElement>(null);
 
   // Live Microphone Voice Recording
   const [isRecording, setIsRecording] = useState(false);
@@ -342,10 +355,26 @@ export function MailboxModal({
     if (!file || !activeItem) return;
     setIsUploadingCardPhoto(true);
     try {
-      const compressedDataUrl = await imageFileToDataUrl(file);
+      // 1. Immediate local preview for zero-lag UI response
+      const localPreview = URL.createObjectURL(file);
+      const tempItem: MailboxBubbleItem = {
+        ...activeItem,
+        photoUrl: localPreview,
+      };
+      setActiveItem(tempItem);
+
+      // 2. Upload to public cloud image storage
+      let finalUrl = "";
+      try {
+        finalUrl = await uploadImageToCloud(file);
+      } catch (cloudErr) {
+        console.warn("Cloud image upload fallback to local compression:", cloudErr);
+        finalUrl = await imageFileToDataUrl(file);
+      }
+
       const updatedItem: MailboxBubbleItem = {
         ...activeItem,
-        photoUrl: compressedDataUrl,
+        photoUrl: finalUrl,
       };
       setActiveItem(updatedItem);
 
@@ -361,27 +390,35 @@ export function MailboxModal({
         : [...items, updatedItem];
       updateItems(updated);
       showToast("Photo memory saved! 📸✨");
-
-      // Upload to Supabase cloud storage in background
-      try {
-        const publicUrl = await uploadGiftFile(file);
-        if (publicUrl && publicUrl !== compressedDataUrl) {
-          const cloudItem = { ...updatedItem, photoUrl: publicUrl };
-          setActiveItem(cloudItem);
-          const nextUpdated = updated.map((i) =>
-            i.id === updatedItem.id || (updatedItem.puppetId && i.puppetId === updatedItem.puppetId)
-              ? cloudItem
-              : i
-          );
-          updateItems(nextUpdated);
-        }
-      } catch (uploadErr) {
-        console.warn("Cloud photo upload deferred, stored locally", uploadErr);
-      }
     } catch (err) {
       alert("Could not process this photo. Please choose another image.");
     } finally {
       setIsUploadingCardPhoto(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  // Handle photo file upload inside universal edit mode
+  const handleEditPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingEditPhoto(true);
+    try {
+      const localPreview = URL.createObjectURL(file);
+      setEditCardPhotoUrl(localPreview);
+      const cloudUrl = await uploadImageToCloud(file);
+      setEditCardPhotoUrl(cloudUrl);
+      showToast("Photo attached to memory! 📸✨");
+    } catch (err) {
+      try {
+        const compressed = await imageFileToDataUrl(file);
+        setEditCardPhotoUrl(compressed);
+        showToast("Photo attached! 📸");
+      } catch {
+        alert("Could not process this image.");
+      }
+    } finally {
+      setIsUploadingEditPhoto(false);
       if (e.target) e.target.value = "";
     }
   };
@@ -418,15 +455,17 @@ export function MailboxModal({
   const handleSaveCardMessage = () => {
     if (!activeItem) return;
     const updatedTitle = editCardTitle.trim() || activeItem.title;
-    const updatedSender = editCardSender.trim() || activeItem.sender || "Your Special Person";
+    const updatedSender = editCardSender.trim() || (activeItem.sender !== "Your Special Person" ? activeItem.sender : "") || "";
     const updatedMessage = editCardMessage.trim();
     const updatedEmoji = editCardEmoji || activeItem.stampEmoji || "💌";
+    const updatedPhotoUrl = editCardPhotoUrl.trim() || undefined;
 
     const updatedItem: MailboxBubbleItem = {
       ...activeItem,
       title: updatedTitle,
-      sender: updatedSender,
+      sender: updatedSender || undefined,
       message: updatedMessage,
+      photoUrl: updatedPhotoUrl,
       photoCaption: activeItem.type === "photo" ? updatedMessage : activeItem.photoCaption,
       stampEmoji: updatedEmoji,
     };
@@ -464,7 +503,7 @@ export function MailboxModal({
             title: activeItem.title || "A Secret Memory",
             message: "",
             photoCaption: "",
-            sender: "Your Special Person",
+            sender: "",
             photoUrl: undefined,
           };
           updated = items.map((i) =>
@@ -483,7 +522,7 @@ export function MailboxModal({
           title: activeItem.title || "A Secret Memory",
           message: "",
           photoCaption: "",
-          sender: "Your Special Person",
+          sender: "",
         };
         updated = [...items, cleared];
         setActiveItem(cleared);
@@ -564,13 +603,15 @@ export function MailboxModal({
     if (!file) return;
     setIsUploadingPhoto(true);
     try {
-      const compressedDataUrl = await imageFileToDataUrl(file);
-      setNewPhotoUrl(compressedDataUrl);
+      const localPreview = URL.createObjectURL(file);
+      setNewPhotoUrl(localPreview);
       try {
-        const publicUrl = await uploadGiftFile(file);
-        if (publicUrl) setNewPhotoUrl(publicUrl);
+        const cloudUrl = await uploadImageToCloud(file);
+        if (cloudUrl) setNewPhotoUrl(cloudUrl);
       } catch (uploadErr) {
         console.warn("Cloud photo upload deferred, stored locally", uploadErr);
+        const compressed = await imageFileToDataUrl(file);
+        setNewPhotoUrl(compressed);
       }
     } catch {
       alert("Could not process this image. Please choose another photo.");
@@ -605,7 +646,7 @@ export function MailboxModal({
         id: `bubble-${Date.now()}`,
         type: "song",
         title: newTitle.trim(),
-        sender: newSender.trim() || "Your Special Person",
+        sender: newSender.trim() || undefined,
         date: isSuno ? "Suno AI Track" : ytId ? "YouTube Track" : "Dedicated Track",
         message: newMessage.trim(),
         songSource: sunoAudio ? ("suno" as const) : ytId ? ("youtube" as const) : ("audio" as const),
@@ -653,7 +694,7 @@ export function MailboxModal({
         id: `bubble-${Date.now()}`,
         type: addTab,
         title: newTitle.trim(),
-        sender: newSender.trim() || "Your Special Person",
+        sender: newSender.trim() || undefined,
         date: addTab === "dream" ? "Future Promise" : "Secret Love Note",
         message: newMessage.trim(),
         hasPaper: newHasPaper,
@@ -1045,7 +1086,7 @@ export function MailboxModal({
                             type="text"
                             value={editCardSender}
                             onChange={(e) => setEditCardSender(e.target.value)}
-                            placeholder="e.g. Your Special Person"
+                            placeholder="e.g. Your Name (Optional)"
                             className="w-full px-2.5 py-1 rounded-lg border border-amber-400/60 bg-black/60 text-amber-100 font-serif text-xs outline-none focus:border-amber-300"
                           />
                         </div>
@@ -1086,6 +1127,57 @@ export function MailboxModal({
                               </button>
                             ))}
                           </div>
+                        </div>
+
+                        {/* Attached Photo / Memory (File upload or Unsplash URL) */}
+                        <div>
+                          <label className="text-[10px] font-serif font-bold text-amber-300/90 tracking-wider uppercase block mb-1">
+                            Photo Attachment (Optional)
+                          </label>
+                          {editCardPhotoUrl ? (
+                            <div className="relative w-full max-h-36 aspect-[16/9] rounded-xl overflow-hidden border border-amber-400/60 mb-1.5 group bg-black/60">
+                              <img
+                                src={editCardPhotoUrl}
+                                alt="Memory preview"
+                                className="w-full h-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditCardPhotoUrl("")}
+                                className="absolute top-1.5 right-1.5 px-2 py-1 rounded-full bg-red-700/90 hover:bg-red-800 text-white text-[10px] font-serif font-bold flex items-center gap-1 cursor-pointer shadow-md transition-transform hover:scale-105 active:scale-95"
+                                title="Remove this photo"
+                              >
+                                <Trash2 size={11} />
+                                <span>Remove Photo</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => editCardPhotoInputRef.current?.click()}
+                                disabled={isUploadingEditPhoto}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-200 text-[11px] font-serif font-semibold cursor-pointer shrink-0 transition-colors"
+                              >
+                                <Camera size={12} className="text-amber-400" />
+                                <span>{isUploadingEditPhoto ? "Uploading..." : "Upload Photo"}</span>
+                              </button>
+                              <input
+                                ref={editCardPhotoInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleEditPhotoUpload}
+                                className="hidden"
+                              />
+                              <input
+                                type="url"
+                                placeholder="Or paste image / Unsplash URL"
+                                value={editCardPhotoUrl}
+                                onChange={(e) => setEditCardPhotoUrl(e.target.value)}
+                                className="flex-1 px-2 py-1 rounded-lg border border-amber-400/40 bg-black/60 text-amber-100 font-serif text-[11px] placeholder-amber-400/40 outline-none"
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1136,9 +1228,11 @@ export function MailboxModal({
                           {activeItem.title}
                         </h3>
 
-                        <p className="font-serif text-[10px] sm:text-[11px] text-amber-300/80 italic mt-0.5">
-                          From: {activeItem.sender || "Your Special Person"}
-                        </p>
+                        {activeItem.sender && activeItem.sender !== "Your Special Person" && (
+                          <p className="font-serif text-[10px] sm:text-[11px] text-amber-300/80 italic mt-0.5">
+                            From: {activeItem.sender}
+                          </p>
+                        )}
 
                         {/* Ornate Gold Filigree Divider */}
                         <div className="flex items-center justify-center gap-2 text-amber-400/80 my-1 text-xs">
@@ -1323,23 +1417,32 @@ export function MailboxModal({
                         {(activeItem.type === "note" || activeItem.type === "dream") && (
                           <div
                             onClick={() => {
+                              if (isReceiver) return;
                               setEditCardTitle(activeItem.title || "");
-                              setEditCardSender(activeItem.sender || "Your Special Person");
+                              setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
                               setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
                               setEditCardEmoji(activeItem.stampEmoji || "💌");
+                              setEditCardPhotoUrl(activeItem.photoUrl || "");
                               setIsEditingCardMessage(true);
                             }}
-                            className="flex flex-col items-center justify-center py-2 px-1 cursor-pointer transition-all hover:opacity-90"
-                            title="Tap to edit message ✍️"
+                            className={`flex flex-col items-center justify-center py-2 px-1 transition-all ${
+                              !isReceiver ? "cursor-pointer hover:opacity-90" : ""
+                            }`}
+                            title={!isReceiver ? "Tap to edit message ✍️" : undefined}
                           >
                             <span className="text-2xl mb-1">{activeItem.stampEmoji || "💌"}</span>
+                            {activeItem.photoUrl && (
+                              <div className="w-full max-h-40 aspect-[16/9] rounded-xl overflow-hidden border border-amber-400/70 shadow-lg my-1.5 bg-black/50">
+                                <img src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
+                              </div>
+                            )}
                             {activeItem.message ? (
                               <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
                                 "{activeItem.message}"
                               </p>
                             ) : (
                               <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
-                                (No message written yet. Tap to write one!)
+                                (No message written yet. {!isReceiver ? "Tap to write one!" : ""})
                               </p>
                             )}
                           </div>
@@ -1400,9 +1503,14 @@ export function MailboxModal({
                           <div className="flex flex-col items-center gap-2 w-full">
                             {/* Clickable Photo Frame */}
                             <div
-                              onClick={() => cardPhotoInputRef.current?.click()}
-                              className="relative group w-full max-h-48 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/50 cursor-pointer transition-all hover:border-amber-300"
-                              title="Click to upload or change photo"
+                              onClick={() => {
+                                if (isReceiver) return;
+                                cardPhotoInputRef.current?.click();
+                              }}
+                              className={`relative group w-full max-h-48 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/50 transition-all ${
+                                !isReceiver ? "cursor-pointer hover:border-amber-300" : ""
+                              }`}
+                              title={!isReceiver ? "Click to upload or change photo" : undefined}
                             >
                               {activeItem.photoUrl ? (
                                 <img
@@ -1416,16 +1524,18 @@ export function MailboxModal({
                                     <Camera size={26} />
                                   </div>
                                   <span className="text-xs font-serif font-bold tracking-wide">
-                                    Tap here to upload a photo 📸
+                                    {!isReceiver ? "Tap here to upload a photo 📸" : "A Cherished Moment"}
                                   </span>
-                                  <span className="text-[10px] text-amber-200/70">
-                                    (Supports JPG, PNG, WEBP from phone or PC)
-                                  </span>
+                                  {!isReceiver && (
+                                    <span className="text-[10px] text-amber-200/70">
+                                      (Supports JPG, PNG, WEBP from phone or PC)
+                                    </span>
+                                  )}
                                 </div>
                               )}
 
-                              {/* Hover Overlay when photo already exists */}
-                              {activeItem.photoUrl && (
+                              {/* Hover Overlay when photo already exists (only for sender) */}
+                              {activeItem.photoUrl && !isReceiver && (
                                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 text-white p-2 text-center backdrop-blur-xs">
                                   <Camera size={22} className="text-amber-400" />
                                   <span className="text-xs font-semibold font-serif text-amber-200">
@@ -1452,96 +1562,106 @@ export function MailboxModal({
                               className="hidden"
                             />
 
-                            {/* Action Buttons & Link Editor */}
-                            <div className="w-full flex flex-col items-center gap-1">
-                              {!isEditingPhotoOnCard ? (
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => cardPhotoInputRef.current?.click()}
-                                    className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/90 hover:text-amber-100 transition-colors cursor-pointer bg-black/30 hover:bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40"
-                                  >
-                                    <Upload size={11} />
-                                    <span>{activeItem.photoUrl ? "Change Photo File" : "Upload Photo File"}</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setCardPhotoUrlInput(activeItem.photoUrl || "");
-                                      setCardPhotoCaptionInput(activeItem.photoCaption || activeItem.message || "");
-                                      setIsEditingPhotoOnCard(true);
-                                    }}
-                                    className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/80 hover:text-amber-100 transition-colors cursor-pointer"
-                                  >
-                                    <Edit3 size={11} />
-                                    <span>Paste Link / Caption</span>
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="w-full flex flex-col gap-1.5 mt-1 p-2 rounded-xl bg-black/60 border border-amber-400/40">
-                                  <input
-                                    type="url"
-                                    placeholder="Paste image or Unsplash link: https://..."
-                                    value={cardPhotoUrlInput}
-                                    onChange={(e) => setCardPhotoUrlInput(e.target.value)}
-                                    className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
-                                  />
-                                  <textarea
-                                    rows={2}
-                                    style={{ minHeight: "50px" }}
-                                    placeholder="Write photo caption (at least 2 lines)..."
-                                    value={cardPhotoCaptionInput}
-                                    onChange={(e) => setCardPhotoCaptionInput(e.target.value)}
-                                    className="w-full min-h-[50px] px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none resize-none font-['Caveat',cursive] text-base"
-                                  />
-                                  <div className="flex items-center justify-end gap-2 pt-0.5">
+                            {/* Action Buttons & Link Editor (hidden for receiver) */}
+                            {!isReceiver && (
+                              <div className="w-full flex flex-col items-center gap-1">
+                                {!isEditingPhotoOnCard ? (
+                                  <div className="flex items-center gap-2 mt-0.5">
                                     <button
                                       type="button"
-                                      onClick={() => setIsEditingPhotoOnCard(false)}
-                                      className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                      onClick={() => cardPhotoInputRef.current?.click()}
+                                      className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/90 hover:text-amber-100 transition-colors cursor-pointer bg-black/30 hover:bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40"
                                     >
-                                      Cancel
+                                      <Upload size={11} />
+                                      <span>{activeItem.photoUrl ? "Change Photo File" : "Upload Photo File"}</span>
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={handleSaveCardPhoto}
-                                      className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
+                                      onClick={() => {
+                                        setCardPhotoUrlInput(activeItem.photoUrl || "");
+                                        setCardPhotoCaptionInput(activeItem.photoCaption || activeItem.message || "");
+                                        setIsEditingPhotoOnCard(true);
+                                      }}
+                                      className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/80 hover:text-amber-100 transition-colors cursor-pointer"
                                     >
-                                      Save Photo
+                                      <Edit3 size={11} />
+                                      <span>Paste Link / Caption</span>
                                     </button>
                                   </div>
-                                </div>
-                              )}
-                            </div>
+                                ) : (
+                                  <div className="w-full flex flex-col gap-1.5 mt-1 p-2 rounded-xl bg-black/60 border border-amber-400/40">
+                                    <input
+                                      type="url"
+                                      placeholder="Paste image or Unsplash link: https://..."
+                                      value={cardPhotoUrlInput}
+                                      onChange={(e) => setCardPhotoUrlInput(e.target.value)}
+                                      className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
+                                    />
+                                    <textarea
+                                      rows={2}
+                                      style={{ minHeight: "50px" }}
+                                      placeholder="Write photo caption (at least 2 lines)..."
+                                      value={cardPhotoCaptionInput}
+                                      onChange={(e) => setCardPhotoCaptionInput(e.target.value)}
+                                      className="w-full min-h-[50px] px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none resize-none font-['Caveat',cursive] text-base"
+                                    />
+                                    <div className="flex items-center justify-end gap-2 pt-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setIsEditingPhotoOnCard(false)}
+                                        className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleSaveCardPhoto}
+                                        className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
+                                      >
+                                        Save Photo
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             {/* Displayed Caption */}
                             {(activeItem.photoCaption || activeItem.message) ? (
                               <p
                                 onClick={() => {
+                                  if (isReceiver) return;
                                   setEditCardTitle(activeItem.title || "");
-                                  setEditCardSender(activeItem.sender || "Your Special Person");
+                                  setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
                                   setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
                                   setEditCardEmoji(activeItem.stampEmoji || "💌");
+                                  setEditCardPhotoUrl(activeItem.photoUrl || "");
                                   setIsEditingCardMessage(true);
                                 }}
-                                className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center cursor-pointer transition-all hover:opacity-90"
-                                title="Tap to edit caption ✍️"
+                                className={`font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center transition-all ${
+                                  !isReceiver ? "cursor-pointer hover:opacity-90" : ""
+                                }`}
+                                title={!isReceiver ? "Tap to edit caption ✍️" : undefined}
                               >
                                 "{activeItem.photoCaption || activeItem.message}"
                               </p>
                             ) : (
                               <p
                                 onClick={() => {
+                                  if (isReceiver) return;
                                   setEditCardTitle(activeItem.title || "");
-                                  setEditCardSender(activeItem.sender || "Your Special Person");
+                                  setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
                                   setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
                                   setEditCardEmoji(activeItem.stampEmoji || "💌");
+                                  setEditCardPhotoUrl(activeItem.photoUrl || "");
                                   setIsEditingCardMessage(true);
                                 }}
-                                className="font-serif italic text-xs text-amber-200/70 px-2 my-1 text-center cursor-pointer hover:underline"
-                                title="Tap to edit caption ✍️"
+                                className={`font-serif italic text-xs text-amber-200/70 px-2 my-1 text-center ${
+                                  !isReceiver ? "cursor-pointer hover:underline" : ""
+                                }`}
+                                title={!isReceiver ? "Tap to edit caption ✍️" : undefined}
                               >
-                                (No caption yet. Tap to write one!)
+                                (No caption yet. {!isReceiver ? "Tap to write one!" : ""})
                               </p>
                             )}
                           </div>
@@ -1551,63 +1671,70 @@ export function MailboxModal({
                         {activeItem.type === "surprise" && (
                           <div
                             onClick={() => {
+                              if (isReceiver) return;
                               setEditCardTitle(activeItem.title || "");
-                              setEditCardSender(activeItem.sender || "Your Special Person");
+                              setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
                               setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
                               setEditCardEmoji(activeItem.stampEmoji || "💌");
+                              setEditCardPhotoUrl(activeItem.photoUrl || "");
                               setIsEditingCardMessage(true);
                             }}
-                            className="flex flex-col items-center justify-center gap-2 py-2 cursor-pointer transition-all hover:opacity-90"
-                            title="Tap to edit message ✍️"
+                            className={`flex flex-col items-center justify-center gap-2 py-2 transition-all ${
+                              !isReceiver ? "cursor-pointer hover:opacity-90" : ""
+                            }`}
+                            title={!isReceiver ? "Tap to edit message ✍️" : undefined}
                           >
                             <span className="text-3xl animate-bounce">✨</span>
+                            {activeItem.photoUrl && (
+                              <div className="w-full max-h-40 aspect-[16/9] rounded-xl overflow-hidden border border-amber-400/70 shadow-lg my-1 bg-black/50">
+                                <img src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
+                              </div>
+                            )}
                             {activeItem.message ? (
                               <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
                                 "{activeItem.message}"
                               </p>
                             ) : (
                               <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
-                                (No surprise message yet. Tap to add one!)
+                                (No surprise message yet. {!isReceiver ? "Tap to add one!" : ""})
                               </p>
                             )}
                           </div>
                         )}
                       </div>
 
-                      {/* ── Universal Edit & Delete Action Row for All Puppets / Cards ── */}
-                      <div className="flex items-center justify-center gap-2 my-1 pt-1.5 border-t border-amber-400/25 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditCardTitle(activeItem.title || "");
-                            setEditCardSender(activeItem.sender || "Your Special Person");
-                            setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
-                            setEditCardEmoji(activeItem.stampEmoji || "💌");
-                            setIsEditingCardMessage(true);
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/45 hover:bg-black/70 text-amber-200 border border-amber-400/40 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
-                        >
-                          <Edit3 size={12} className="text-amber-400" />
-                          <span>Edit Message ✍️</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleDeleteCardMessage}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-950/40 hover:bg-rose-950/70 text-rose-300 border border-rose-400/35 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
-                          title="Delete or clear this message"
-                        >
-                          <Trash2 size={12} />
-                          <span>Delete</span>
-                        </button>
-                      </div>
+                      {/* ── Universal Edit & Delete Action Row for All Puppets / Cards (Hidden for receiver) ── */}
+                      {!isReceiver && (
+                        <div className="flex items-center justify-center gap-2 my-1 pt-1.5 border-t border-amber-400/25 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditCardTitle(activeItem.title || "");
+                              setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
+                              setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                              setEditCardEmoji(activeItem.stampEmoji || "💌");
+                              setEditCardPhotoUrl(activeItem.photoUrl || "");
+                              setIsEditingCardMessage(true);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/45 hover:bg-black/70 text-amber-200 border border-amber-400/40 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                          >
+                            <Edit3 size={12} className="text-amber-400" />
+                            <span>Edit Message ✍️</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleDeleteCardMessage}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-950/40 hover:bg-rose-950/70 text-rose-300 border border-rose-400/35 text-[11px] font-serif font-semibold shadow-xs transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                            title="Delete or clear this message"
+                          >
+                            <Trash2 size={12} />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      )}
 
                       {/* Bottom Footer inside Scroll */}
-                      <div className="flex flex-col items-center shrink-0 mt-1">
-                        <p className="font-['Caveat',cursive] text-sm text-amber-300/90 italic flex items-center gap-1">
-                          <Heart size={12} className="text-amber-400 fill-amber-400" />
-                          <span>Yours always, by your special person</span>
-                        </p>
-
+                      <div className="flex flex-col items-center shrink-0 mt-2">
                         <button
                           onClick={() => {
                             setActiveItem(null);
@@ -1811,7 +1938,7 @@ export function MailboxModal({
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Your Special Person"
+                      placeholder="e.g. Your Name (Optional)"
                       value={newSender}
                       onChange={(e) => setNewSender(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs"

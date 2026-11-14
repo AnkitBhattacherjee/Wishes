@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Send,
   Eye,
+  Music,
 } from "lucide-react";
 import {
   type GiftProject,
@@ -156,6 +157,37 @@ export function ShareModal({
                 </>
               )}
             </div>
+
+            {/* Gift Content & Audio Confirmation Badge */}
+            <div className="mt-2.5 p-3 rounded-2xl bg-amber-50/90 border border-amber-300/80 shadow-xs flex flex-col gap-1.5 text-xs text-[#4a2e37]">
+              <div className="flex items-center justify-between font-bold text-amber-950">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-amber-600" />
+                  <span>Receiver Gift Contents</span>
+                </span>
+                <span className="text-[10px] text-emerald-700 bg-emerald-100/90 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Check size={11} strokeWidth={3} />
+                  <span>Encoded in Link</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-[#5c3a45]">
+                <Music size={13} className="text-pink-600 shrink-0" />
+                <span className="truncate">
+                  <strong>Song:</strong>{" "}
+                  {project.customSongYoutubeId
+                    ? `YouTube Track (${project.customSongName || "Connected"})`
+                    : project.customSongUrl && project.customSongUrl.startsWith("http")
+                      ? `Cloud Stream (${project.customSongName || "Uploaded Audio"})`
+                      : project.customSongName
+                        ? project.customSongName
+                        : "Birthday Waltz (Default Celebration Song)"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-emerald-700 font-medium">
+                <ShieldCheck size={12} className="shrink-0" />
+                <span>Plays automatically when your recipient opens the link! ✨</span>
+              </div>
+            </div>
           </div>
 
           {/* Two Distinct Sharing Paths */}
@@ -165,7 +197,7 @@ export function ShareModal({
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-['Playfair_Display',serif] font-bold text-sm text-[#3b1a26]">
                   <Send size={15} className="text-pink-600" />
-                  <span>1. Receiver Link (For Your Special Person)</span>
+                  <span>1. Receiver Link (For Recipient)</span>
                 </span>
                 <span className="text-[10px] font-bold text-pink-700 bg-pink-100/90 px-2 py-0.5 rounded-full">
                   Read-Only Surprise

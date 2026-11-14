@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Upload, Sparkles, Check } from 'lucide-react';
 import { STICKER_LIBRARY, STICKER_CATEGORIES, StickerItem } from './stickerLibrary';
 import { useStickers } from './StickerContext';
+import { uploadImageToCloud } from '../../utils/imageCloudUpload';
 
 export function StickerModal() {
   const stickers = useStickers();
@@ -15,24 +16,36 @@ export function StickerModal() {
     ? STICKER_LIBRARY
     : STICKER_LIBRARY.filter((s) => s.category === selectedCategory);
 
-  const handleCustomUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCustomUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result as string;
-        if (result) {
-          stickers.applySticker(result, {
-            id: 'custom_upload_' + Date.now(),
-            name: file.name.replace(/\.[^/.]+$/, ''),
-            category: 'decorative',
-            src: result,
-            defaultWidth: 140,
-            defaultHeight: 140,
-          });
-        }
-      };
-      reader.readAsDataURL(file);
+      try {
+        const cloudUrl = await uploadImageToCloud(file);
+        stickers.applySticker(cloudUrl, {
+          id: 'custom_upload_' + Date.now(),
+          name: file.name.replace(/\.[^/.]+$/, ''),
+          category: 'decorative',
+          src: cloudUrl,
+          defaultWidth: 140,
+          defaultHeight: 140,
+        });
+      } catch {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const result = event.target?.result as string;
+          if (result) {
+            stickers.applySticker(result, {
+              id: 'custom_upload_' + Date.now(),
+              name: file.name.replace(/\.[^/.]+$/, ''),
+              category: 'decorative',
+              src: result,
+              defaultWidth: 140,
+              defaultHeight: 140,
+            });
+          }
+        };
+        reader.readAsDataURL(file);
+      }
       e.target.value = '';
     }
   };

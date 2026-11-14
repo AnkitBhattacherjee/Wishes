@@ -418,14 +418,22 @@ export default function RoomPage() {
       });
   };
 
-  // Attempt playback on mount
+  // Synchronize song state whenever project custom song properties update
   useEffect(() => {
     if (project.customSongUrl === "idb:room_custom_song") {
       getAudioObjectUrl("room_custom_song").then((blobUrl) => {
         if (blobUrl) setSongUrl(blobUrl);
       });
+    } else if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+      setSongUrl(project.customSongUrl);
+      setYoutubeId(null);
+    } else if (project.customSongYoutubeId) {
+      setYoutubeId(project.customSongYoutubeId);
     }
-  }, [project.customSongUrl]);
+    if (project.customSongName) {
+      setSongTitle(project.customSongName);
+    }
+  }, [project.customSongUrl, project.customSongYoutubeId, project.customSongName]);
 
   useEffect(() => {
     if (youtubeId) {
@@ -749,7 +757,7 @@ export default function RoomPage() {
   };
 
   const handleReturnToWish = () => {
-    navigate("/wish", {
+    navigate(`/wish${location.search}`, {
       state: {
         name,
         occasion,
@@ -1072,8 +1080,9 @@ export default function RoomPage() {
                       <Disc size={15} className={`text-pink-400 shrink-0 ${isPlaying ? "animate-spin" : ""}`} />
                       <div className="flex flex-col min-w-0">
                         <span className="text-[11px] font-bold text-white truncate">{songTitle}</span>
-                        <span className="text-[9px] text-emerald-400 font-medium">
-                          {youtubeId ? "✓ YouTube audio connected" : project.customSongUrl ? "✓ Cloud audio stream ready" : "Default audio track"}
+                        <span className="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
+                          <Check size={11} strokeWidth={2.5} />
+                          {youtubeId ? "YouTube track saved for receiver" : project.customSongUrl ? "Cloud audio saved for receiver" : "Default celebration audio"}
                         </span>
                       </div>
                     </div>
@@ -1350,9 +1359,6 @@ export default function RoomPage() {
                   <div>
                     <p className="font-['Alex_Brush',cursive] text-[24px] sm:text-[28px] text-[#2e1820] leading-none">
                       Yours always,
-                    </p>
-                    <p className="font-['Poppins',sans-serif] text-[10px] sm:text-[11px] font-bold text-pink-700/90 tracking-wider mt-1 uppercase">
-                      Prepared with love by your special person
                     </p>
                   </div>
 

@@ -1,5 +1,7 @@
 import { projectId as supabaseProjectId, publicAnonKey } from "../../utils/supabase/info";
 import { uploadAudioToCloud } from "./utils/audioCloudUpload";
+import { uploadImageToCloud } from "./utils/imageCloudUpload";
+import { isSupabaseConfigured } from "./utils/supabaseStorage";
 
 export type ScrapbookPage = {
   id: string;
@@ -44,7 +46,7 @@ export const DEFAULT_MAILBOX_ITEMS: MailboxBubbleItem[] = [
     id: "bubble-note-1",
     type: "note",
     title: "A Secret Love Note 💌",
-    sender: "Your Special Person",
+    sender: "",
     date: "From the Heart",
     message: "Every day with you feels like a quiet blessing. Thank you for bringing so much gentle light, warmth, and laughter into my life.",
     hasPaper: true, // Special note carries the folded paper!
@@ -57,7 +59,7 @@ export const DEFAULT_MAILBOX_ITEMS: MailboxBubbleItem[] = [
     type: "song",
     title: "Our Dedicated Song 🎵",
     artist: "Selected with Love",
-    sender: "Your Special Person",
+    sender: "",
     date: "Dedicated Track",
     message: "I picked this melody especially for you. Whenever this plays, remember how much you mean to me.",
     songSource: "youtube",
@@ -258,6 +260,9 @@ export function loadGiftProject(): GiftProject {
         if (editParam) {
           decoded.editToken = editParam;
         }
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
+        } catch {}
         return decoded;
       }
     }
@@ -334,7 +339,7 @@ export function createReceiverShareLink(project: GiftProject): string {
   const sealed = { ...project, isSealed: true, sealedAt: project.sealedAt || Date.now() };
   const token = encodeSharedProject(sealed);
   if (typeof window === "undefined") {
-    return `#/wish?gift=${token}`;
+    return `#/wish?gift=${token}&view=receiver`;
   }
   const origin = window.location.origin;
   let pathname = window.location.pathname || "";
@@ -342,7 +347,7 @@ export function createReceiverShareLink(project: GiftProject): string {
     pathname = pathname.substring(0, pathname.lastIndexOf("/"));
   }
   pathname = pathname.replace(/\/+$/, "");
-  return `${origin}${pathname}/#/wish?gift=${token}`;
+  return `${origin}${pathname}/#/wish?gift=${token}&view=receiver`;
 }
 
 export function createSenderEditLink(project: GiftProject): string {
@@ -400,6 +405,11 @@ const headers = {
 
 export async function persistGiftProject(project: GiftProject) {
   if (!project.editToken) return project;
+  if (!isSupabaseConfigured()) {
+    // Project is safely stored in browser localStorage and self-contained in receiver link
+    reportCloudStatus("saved");
+    return project;
+  }
   if (Date.now() < cloudUnavailableUntil) {
     reportCloudStatus("offline");
     throw new Error("Cloud sync is temporarily unavailable");
@@ -426,6 +436,9 @@ export async function persistGiftProject(project: GiftProject) {
 }
 
 export async function loadCloudGiftProject(id: string): Promise<GiftProject> {
+  if (!isSupabaseConfigured()) {
+    return loadGiftProject();
+  }
   reportCloudStatus("syncing");
   try {
     const response = await fetch(`${API_URL}/projects/${id}`, { headers });
@@ -465,6 +478,20 @@ export async function uploadGiftFile(file: File | Blob, customMime?: string): Pr
     }
   }
 
+  // If it's an image file, upload to fast public cloud image storage directly
+  const isImage =
+    (file instanceof File && file.type.startsWith("image/")) ||
+    (customMime && customMime.startsWith("image/"));
+
+  if (isImage) {
+    try {
+      const cloudUrl = await uploadImageToCloud(file);
+      return cloudUrl;
+    } catch (err) {
+      console.warn("Cloud image upload failed, falling back to local compression:", err);
+    }
+  }
+
   const project = loadGiftProject();
   let dataUrl: string;
 
@@ -479,22 +506,5 @@ export async function uploadGiftFile(file: File | Blob, customMime?: string): Pr
     });
   }
 
-  if (!project.editToken) return dataUrl;
-  await persistGiftProject(project).catch(() => {});
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    const response = await fetch(`${API_URL}/projects/${project.projectId}/files`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ editToken: project.editToken, dataUrl }),
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timeout));
-    if (!response.ok) return dataUrl;
-    const body = await response.json();
-    return body.url || dataUrl;
-  } catch {
-    return dataUrl;
-  }
+  return dataUrl;
 }

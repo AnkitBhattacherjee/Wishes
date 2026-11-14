@@ -265,7 +265,7 @@ export function PutulKhelaStage({
         id: `putul-default-${slot.key}`,
         type: slot.defaultType,
         title: slot.defaultTitle,
-        sender: "Your Special Person",
+        sender: "",
         date: "Putul Khela Stage",
         message: slot.defaultMessage,
         puppetId: slot.key,
