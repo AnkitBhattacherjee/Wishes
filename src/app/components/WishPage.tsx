@@ -249,6 +249,154 @@ function InteractiveSticker({
   );
 }
 
+/* ── Front Card Greeting Wish Modal (Single-line / Short Quote) ── */
+function FrontWishModal({
+  isOpen,
+  onClose,
+  onSave,
+  onOpenLetter,
+  name,
+  initialMessage,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (message: string) => void;
+  onOpenLetter: () => void;
+  name: string;
+  initialMessage: string;
+}) {
+  const [message, setMessage] = useState(initialMessage);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMessage(initialMessage);
+    }
+  }, [isOpen, initialMessage]);
+
+  const QUICK_SUGGESTIONS = [
+    `Wishing you a day as radiant, magical, and wonderful as your smile! ✨`,
+    `Happy Birthday ${name}! May all your sweetest dreams come true today and always! 🎂💖`,
+    `Here's to celebrating the most special person in my universe! 🥂🌟`,
+    `May this year bring you boundless happiness, gentle warmth, and endless laughter! 🌸`,
+  ];
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onClose} />
+
+          <motion.div
+            className="relative z-10 w-full max-w-[500px] rounded-3xl bg-white/95 backdrop-blur-xl border border-pink-100 shadow-[0_25px_70px_rgba(196,88,122,0.25)] p-6 sm:p-7 overflow-hidden text-[#3d2730]"
+            initial={{ scale: 0.9, y: 20, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.9, y: 20, opacity: 0 }}
+            transition={{ type: "spring", damping: 25, stiffness: 320 }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-pink-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center">
+                  <Sparkles size={16} />
+                </div>
+                <div>
+                  <h3 className="font-['Playfair_Display',serif] font-bold text-lg text-[#2e1820]">
+                    Front Card Wish
+                  </h3>
+                  <p className="font-['Poppins',sans-serif] text-[11px] text-[#785460]">
+                    A sweet 1–2 line quote or tagline shown on the main card
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-black flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Input Form */}
+            <div className="mt-4">
+              <label className="block font-['Poppins',sans-serif] text-xs font-semibold text-[#5a3a44] mb-1.5">
+                Greeting Message (1–2 lines)
+              </label>
+              <textarea
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Write a sweet single line wish, birthday quote, or tagline..."
+                className="w-full px-3.5 py-2.5 text-sm sm:text-base font-['Caveat',cursive] rounded-2xl border border-pink-200 bg-pink-50/30 focus:bg-white focus:outline-none focus:ring-2 focus:ring-pink-300 transition-all text-[#2d1b22] placeholder:text-gray-400 placeholder:font-['Poppins',sans-serif] placeholder:text-xs resize-none"
+              />
+              <p className="mt-1 text-[10px] text-gray-400 font-['Poppins',sans-serif] text-right">
+                Keep it short & sweet for the front card
+              </p>
+
+              {/* Quick Inspiration suggestions */}
+              <div className="mt-3">
+                <span className="block font-['Poppins',sans-serif] text-[10px] uppercase font-bold tracking-wider text-[#8c6b77] mb-1.5">
+                  Or pick a sweet line:
+                </span>
+                <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1">
+                  {QUICK_SUGGESTIONS.map((sug, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setMessage(sug)}
+                      className="text-left text-xs font-['Caveat',cursive] text-lg text-[#5a3a44] hover:text-pink-700 p-2 rounded-xl bg-pink-50/50 hover:bg-pink-100/70 border border-pink-100/80 transition-colors cursor-pointer truncate"
+                      title={sug}
+                    >
+                      "{sug}"
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-5 pt-3.5 border-t border-pink-100 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenLetter();
+                }}
+                className="flex items-center gap-1.5 text-xs font-medium text-pink-700 hover:text-pink-900 transition-colors cursor-pointer hover:underline"
+              >
+                <Feather size={13} />
+                <span>Open Full Letter Paper 💌</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSave(message)}
+                  className="px-5 py-2 text-xs font-bold rounded-full bg-gradient-to-r from-pink-500 to-[#c4587a] text-white shadow-md hover:opacity-95 active:scale-95 transition-all cursor-pointer"
+                >
+                  Save Wish ✨
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 /* ── Real Wish Letter on Floral Parchment Paper ── */
 function WishModal({
   isOpen,
@@ -515,7 +663,16 @@ export default function WishPage() {
   const [hasChanges, setHasChanges] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isFrontWishModalOpen, setIsFrontWishModalOpen] = useState(false);
   const { recipient: name, occasion, relationship, backgroundIndex: bgIndex, wish: savedWish } = project;
+  const frontWish = project.frontMessage?.trim() || "";
+  const defaultFrontWish = `Wishing you a day as magical, bright, and wonderful as your smile! ✨`;
+  const displayFrontWish = frontWish || defaultFrontWish;
+
+  const handleSaveFrontWish = (newFrontWish: string) => {
+    updateProject({ frontMessage: newFrontWish.trim() });
+    setIsFrontWishModalOpen(false);
+  };
 
   // Automatically show user guide tour on first visit
   useEffect(() => {
@@ -1035,12 +1192,12 @@ export default function WishPage() {
         />
       </motion.div>
 
-      {/* Centerpiece Wish Note Card - Real Floral Stationery Letter Preview */}
+      {/* Centerpiece Greeting Card (Short 1-2 line wish / quote, distinct from the complete letter) */}
       <motion.div
-        className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[450px] max-w-[84vw] cursor-pointer"
+        className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[460px] max-w-[86vw] cursor-pointer"
         whileHover={{ scale: 1.03, y: -4 }}
         whileTap={{ scale: 0.98 }}
-        onClick={() => setIsModalOpen(true)}
+        onClick={() => setIsFrontWishModalOpen(true)}
       >
         <div
           className="rounded-[24px] p-6 sm:p-7 relative overflow-hidden backdrop-blur-md transition-all duration-300 border border-amber-200/70 shadow-[0_20px_50px_rgba(196,88,122,0.18),0_6px_20px_rgba(0,0,0,0.06)] text-center"
@@ -1055,34 +1212,45 @@ export default function WishPage() {
           <div className="absolute inset-0 bg-white/45 backdrop-blur-[1px] pointer-events-none" />
 
           <div className="relative z-10 flex flex-col items-center">
-            <div className="flex items-center justify-center gap-2 mb-1.5 text-pink-700 text-[11px] font-bold tracking-widest uppercase">
+            <div className="flex items-center justify-center gap-2 mb-2 text-pink-700 text-[11px] font-bold tracking-widest uppercase">
               <Sparkles size={13} />
-              <span>{savedWish ? "Heartfelt Letter" : `A Letter For ${name}`}</span>
+              <span>{frontWish ? "Special Wish" : `A Wish For ${name}`}</span>
               <Sparkles size={13} />
             </div>
 
-            {savedWish ? (
-              <p className="font-['Caveat',cursive] text-[24px] sm:text-[27px] leading-relaxed text-[#2d1b22] line-clamp-3 px-4 select-none">
-                "{savedWish}"
-              </p>
-            ) : (
-              <div className="py-2 select-none">
-                <p className="font-['Alex_Brush',cursive] text-[36px] sm:text-[44px] text-[#2e1820] leading-tight">
-                  My Dearest {name}
-                </p>
-                <p className="font-['Poppins',sans-serif] text-[12px] sm:text-[13px] text-pink-800/80 mt-1 font-medium">
-                  Tap to write your stationery letter 💌
-                </p>
-              </div>
-            )}
+            <p className="font-['Caveat',cursive] text-[24px] sm:text-[28px] leading-relaxed text-[#2d1b22] px-4 select-none">
+              "{displayFrontWish}"
+            </p>
 
-            <div className="mt-3 pt-2.5 border-t border-[#dfc2c8]/60 w-full flex items-center justify-between text-[11px] font-medium text-[#785460] select-none px-2">
+            <div className="mt-3.5 pt-2.5 border-t border-[#dfc2c8]/60 w-full flex items-center justify-between text-[11px] font-medium text-[#785460] select-none px-2">
               <span className="font-bold tracking-wider uppercase text-pink-700/80 text-[10px]">
                 By your special person
               </span>
-              <span className="text-pink-600 font-semibold hover:underline">
-                {savedWish ? "Click to edit letter ✍️" : "Click to write ✍️"}
-              </span>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFrontWishModalOpen(true);
+                  }}
+                  className="text-pink-600 hover:text-pink-800 font-semibold cursor-pointer hover:underline"
+                >
+                  Edit wish ✍️
+                </button>
+                <span className="text-pink-300">·</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsModalOpen(true);
+                  }}
+                  className="text-pink-700 hover:text-pink-900 font-semibold flex items-center gap-0.5 cursor-pointer hover:underline"
+                  title="Open the complete handwritten letter paper"
+                >
+                  <span>Full letter</span>
+                  <span>💌</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1126,7 +1294,20 @@ export default function WishPage() {
         </div>
       </motion.div>
 
-      {/* Wish Modal */}
+      {/* Front Card Wish Modal (Short single-line greeting wish) */}
+      <FrontWishModal
+        isOpen={isFrontWishModalOpen}
+        onClose={() => setIsFrontWishModalOpen(false)}
+        onSave={handleSaveFrontWish}
+        onOpenLetter={() => {
+          setIsFrontWishModalOpen(false);
+          setIsModalOpen(true);
+        }}
+        name={name}
+        initialMessage={project.frontMessage || ""}
+      />
+
+      {/* Complete Handwritten Wish Letter Modal (Stationery Floral Paper) */}
       <WishModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
