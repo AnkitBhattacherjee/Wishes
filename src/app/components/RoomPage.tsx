@@ -499,39 +499,47 @@ export default function RoomPage() {
 
   const handleApplySunoSong = async () => {
     if (!sunoInput.trim()) return;
-    setIsResolvingSuno(true);
-    try {
-      const directUrl = await resolveSunoAudioUrl(sunoInput);
-      if (!directUrl) {
-        alert("Could not load this Suno link. Please open your song on Suno, copy the link from your browser address bar (suno.com/song/...), or upload the downloaded MP3 file!");
-        return;
-      }
-      const isSuno = isSunoUrl(sunoInput);
-      const title = isSuno ? `My Suno AI Song for ${name} 🎵` : `Celebration Song for ${name} 🎵`;
-      setSongUrl(directUrl);
-      setSongTitle(title);
-      const next = saveGiftProject({
-        ...project,
-        customSongUrl: directUrl,
-        customSongName: title,
-      });
-      setProject(next);
-      persistGiftProject(next).catch(() => {});
-      setShowMusicMenu(false);
-      setSunoInput("");
-      setTimeout(() => {
-        const media = isVideoMedia(directUrl) ? videoRef.current : audioRef.current;
-        if (media) {
-          media.load();
-          startAudioPlayback();
-        }
-      }, 250);
-    } catch (err) {
-      console.error("Suno resolution failed", err);
-      alert("Could not play this Suno song. Try copying the link from the browser address bar (suno.com/song/...) or upload the downloaded MP3!");
-    } finally {
-      setIsResolvingSuno(false);
+    const input = sunoInput.trim();
+
+    // If it's a Suno web link, Suno blocks hotlinking and encrypts raw stream chunks
+    if (isSunoUrl(input)) {
+      alert(
+        "🎵 Suno AI Link Detected!\n\n" +
+        "Suno encrypts its live browser streams with DRM to prevent hotlinking.\n\n" +
+        "✨ Quick 5-Second Solution:\n" +
+        "1. In Suno, click the three dots (...) next to your song\n" +
+        "2. Click Download ➔ Audio (downloads the MP3 file)\n" +
+        "3. Click the pink 'Upload MP3 (Suno Download)' button right below!\n\n" +
+        "Your song will be saved to Supabase cloud storage and guaranteed to play on all mobile & desktop devices!"
+      );
+      return;
     }
+
+    // Direct audio URL (.mp3, .wav, .ogg, .m4a)
+    const directUrl = extractSunoAudioUrl(input);
+    if (!directUrl) {
+      alert("Please enter a direct audio link (.mp3, .wav) or click 'Upload MP3' below to upload your song!");
+      return;
+    }
+
+    const title = `Celebration Song for ${name} 🎵`;
+    setSongUrl(directUrl);
+    setSongTitle(title);
+    const next = saveGiftProject({
+      ...project,
+      customSongUrl: directUrl,
+      customSongName: title,
+    });
+    setProject(next);
+    persistGiftProject(next).catch(() => {});
+    setShowMusicMenu(false);
+    setSunoInput("");
+    setTimeout(() => {
+      if (audioRef.current) {
+        audioRef.current.load();
+        startAudioPlayback();
+      }
+    }, 200);
   };
 
   const handleResetSong = () => {

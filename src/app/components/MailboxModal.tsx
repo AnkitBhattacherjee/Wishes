@@ -1317,8 +1317,8 @@ export function MailboxModal({
                           className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white focus:border-amber-500 outline-none text-xs"
                         />
 
-                        {/* Live Suno AI Detection & Preview */}
-                        {extractSunoAudioUrl(newYoutubeUrl) && isSunoUrl(newYoutubeUrl) ? (
+                        {/* Live Suno AI Detection & Tip */}
+                        {isSunoUrl(newYoutubeUrl) ? (
                           <div className="mt-2.5 p-2.5 rounded-xl bg-purple-50 border border-purple-300 flex items-center gap-3">
                             <div className="size-10 rounded-lg bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs font-bold text-xs">
                               AI 🎵
@@ -1326,10 +1326,10 @@ export function MailboxModal({
                             <div className="flex flex-col text-left">
                               <p className="text-[11px] text-purple-900 font-bold flex items-center gap-1">
                                 <Sparkles size={12} className="text-purple-600" />
-                                <span>Suno AI Song Connected!</span>
+                                <span>Suno AI Song</span>
                               </p>
-                              <p className="text-[10px] text-purple-700">
-                                Direct stream ready! The receiver hears your song directly in the app without needing a Suno account or redirect.
+                              <p className="text-[10px] text-purple-700 leading-snug">
+                                💡 <span className="font-semibold">Recommended:</span> In Suno, click <span className="font-bold">...</span> ➔ <span className="font-bold">Download</span> ➔ <span className="font-bold">Audio</span>, then click "Upload MP3 or Audio" below to save it permanently in cloud storage!
                               </p>
                             </div>
                           </div>
