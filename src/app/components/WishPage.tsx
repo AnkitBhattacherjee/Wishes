@@ -7,7 +7,7 @@ import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFo
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Check, Share2, Sparkles, Heart, Eye, Edit3, X, Feather } from "lucide-react";
+import { Check, Share2, Sparkles, Heart, Eye, Edit3, X, Feather, Image as ImageIcon, ExternalLink, RotateCcw, ChevronDown, Trash2 } from "lucide-react";
 import {
   createShareLink,
   loadCloudGiftProject,
@@ -39,16 +39,103 @@ const cakeImageMap: Record<string, string> = {
   decorated: imgCake4,
 };
 
-/* ── Background sets per theme ── */
-const backgrounds: Record<string, string[]> = {
-  default: [
-    imgImage10,
-    "https://images.unsplash.com/photo-1770977883066-4dbee15c84d2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwYXN0ZWwlMjBmbG9yYWwlMjB2aW50YWdlJTIwd2F0ZXJjb2xvciUyMHRleHR1cmV8ZW58MXx8fHwxNzcyNDQxNjQ3fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-    "https://images.unsplash.com/photo-1578972497170-bfc780c65f65?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwaW5rJTIwcm9zZSUyMHBldGFscyUyMHJvbWFudGljJTIwc29mdCUyMGJhY2tncm91bmR8ZW58MXx8fHwxNzcyNDQxNjQ4fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-    "https://images.unsplash.com/photo-1769443398678-411926888200?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiaXJ0aGRheSUyMGNlbGVicmF0aW9uJTIwcGFzdGVsJTIwY29uZmV0dGklMjBiYWxsb29uc3xlbnwxfHx8fDE3NzI0NDE2NDh8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-    "https://images.unsplash.com/photo-1770740830168-eedfa0126ad8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx3YXJtJTIwZ29sZGVuJTIwYm9rZWglMjByb21hbnRpYyUyMGxpZ2h0c3xlbnwxfHx8fDE3NzI0NDE2NDl8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  ],
-};
+/* ── Curated Scenery Background Presets ── */
+export interface BackgroundPreset {
+  id: string;
+  name: string;
+  subtitle: string;
+  src: string;
+  thumbnail: string;
+}
+
+export const PRESET_BACKGROUNDS: BackgroundPreset[] = [
+  {
+    id: "default-stationery",
+    name: "Vintage Letter Parchment",
+    subtitle: "Original hand-painted aesthetic",
+    src: imgImage10,
+    thumbnail: imgImage10,
+  },
+  {
+    id: "rose-petals",
+    name: "Soft Rose Petals",
+    subtitle: "Romantic pastel blooms",
+    src: "https://images.unsplash.com/photo-1578972497170-bfc780c65f65?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1578972497170-bfc780c65f65?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "warm-bokeh",
+    name: "Golden Fairy Bokeh",
+    subtitle: "Warm magical twilight glow",
+    src: "https://images.unsplash.com/photo-1770740830168-eedfa0126ad8?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1770740830168-eedfa0126ad8?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "dreamy-clouds",
+    name: "Cotton Candy Sunset",
+    subtitle: "Dreamy pastel sky & clouds",
+    src: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "pastel-celebration",
+    name: "Festive Confetti",
+    subtitle: "Joyful celebration confetti",
+    src: "https://images.unsplash.com/photo-1769443398678-411926888200?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1769443398678-411926888200?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "floral-watercolor",
+    name: "Blossom Watercolor",
+    subtitle: "Botanical painterly canvas",
+    src: "https://images.unsplash.com/photo-1770977883066-4dbee15c84d2?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1770977883066-4dbee15c84d2?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "vintage-rose",
+    name: "Vintage Garden Roses",
+    subtitle: "Nostalgic antique pink florals",
+    src: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=260&q=70",
+  },
+  {
+    id: "starry-night",
+    name: "Starlit Midnight",
+    subtitle: "Deep celestial stars & wonder",
+    src: "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1920&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=260&q=70",
+  },
+];
+
+function formatUnsplashUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+
+  const photoPageMatch = trimmed.match(/unsplash\.com\/photos\/(?:[\w-]+-)?([a-zA-Z0-9_-]{5,})/);
+  if (photoPageMatch && photoPageMatch[1]) {
+    const photoId = photoPageMatch[1];
+    return `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&w=1920&q=80`;
+  }
+
+  if (trimmed.includes("images.unsplash.com")) {
+    try {
+      const urlObj = new URL(trimmed);
+      urlObj.searchParams.set("auto", "format");
+      urlObj.searchParams.set("fit", "crop");
+      if (!urlObj.searchParams.has("w") || Number(urlObj.searchParams.get("w")) < 1200) {
+        urlObj.searchParams.set("w", "1920");
+      }
+      if (!urlObj.searchParams.has("q")) {
+        urlObj.searchParams.set("q", "80");
+      }
+      return urlObj.toString();
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
+}
 
 /* ── The 4 Main Interactive Components on WishPage (Identical Uniform Dimensions) ── */
 const STICKER_SIZE = 300;
@@ -498,11 +585,52 @@ export default function WishPage() {
     }
   };
 
-  const bgList = backgrounds.default;
-  const currentBg = bgList[bgIndex];
+  const [isBgDropdownOpen, setIsBgDropdownOpen] = useState(false);
+  const [unsplashInput, setUnsplashInput] = useState("");
+  const [unsplashError, setUnsplashError] = useState<string | null>(null);
+  const bgDropdownRef = useRef<HTMLDivElement>(null);
 
-  const cycleBg = () => {
-    updateProject({ backgroundIndex: (bgIndex + 1) % bgList.length });
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!isBgDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (bgDropdownRef.current && !bgDropdownRef.current.contains(e.target as Node)) {
+        setIsBgDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isBgDropdownOpen]);
+
+  const activeCustomBg = project.customBgUrl?.trim() || null;
+  const activePresetBg = PRESET_BACKGROUNDS[bgIndex]?.src || PRESET_BACKGROUNDS[0].src;
+  const activeBg = activeCustomBg || activePresetBg;
+  const isUsingCustom = Boolean(activeCustomBg);
+
+  const handleApplyCustomUrl = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const formatted = formatUnsplashUrl(unsplashInput);
+    if (!formatted) {
+      setUnsplashError("Please paste an image or Unsplash link");
+      return;
+    }
+    if (!formatted.startsWith("http://") && !formatted.startsWith("https://")) {
+      setUnsplashError("Link must start with https://");
+      return;
+    }
+    setUnsplashError(null);
+    updateProject({ customBgUrl: formatted });
+    setUnsplashInput("");
+  };
+
+  const handleSelectPreset = (index: number) => {
+    updateProject({ customBgUrl: null, backgroundIndex: index });
+  };
+
+  const handleResetToDefault = () => {
+    updateProject({ customBgUrl: null, backgroundIndex: 0 });
+    setUnsplashInput("");
+    setUnsplashError(null);
   };
 
   const handleSaveWish = (wish: string, fontStyle?: "caveat" | "dancing" | "playfair") => {
@@ -568,24 +696,24 @@ export default function WishPage() {
       {/* Background with crossfade */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={bgIndex}
+          key={activeBg}
           className="absolute inset-0"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.6, ease: "easeInOut" }}
         >
-          {bgIndex === 0 ? (
+          {activeBg === imgImage10 ? (
             <img
               alt="Background"
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-              src={currentBg}
+              src={activeBg}
             />
           ) : (
             <ImageWithFallback
               alt="Background"
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-              src={currentBg}
+              src={activeBg}
             />
           )}
         </motion.div>
@@ -599,28 +727,189 @@ export default function WishPage() {
         }}
       />
 
-      {/* Change BG button */}
-      <motion.button
-        className="absolute top-[28px] left-[28px] z-30 flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border-none transition-colors hover:bg-white/85"
-        style={{
-          background: "rgba(255,255,255,0.65)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
-        }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={cycleBg}
-      >
-        <motion.div
-          animate={{ rotate: 0 }}
-          whileHover={{ rotate: -180 }}
-          transition={{ duration: 0.4 }}
-          className="text-[#6b5e58]"
+      {/* Change BG button & popover dropdown */}
+      <div className="absolute top-[28px] left-[28px] z-40" ref={bgDropdownRef}>
+        <motion.button
+          type="button"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border border-white/60 transition-all hover:bg-white/90 shadow-md backdrop-blur-md"
+          style={{
+            background: isBgDropdownOpen ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.72)",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5)",
+          }}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={() => setIsBgDropdownOpen((prev) => !prev)}
         >
-          <RefreshIcon />
-        </motion.div>
-        <span className="font-['Poppins',sans-serif] text-[14px] text-[#5a4e48]">Change bg</span>
-      </motion.button>
+          <motion.div
+            animate={{ rotate: isBgDropdownOpen ? 180 : 0 }}
+            transition={{ duration: 0.25 }}
+            className="text-[#6b5e58]"
+          >
+            <ImageIcon size={16} className="text-[#c4587a]" />
+          </motion.div>
+          <span className="font-['Poppins',sans-serif] text-[13px] font-medium text-[#5a4e48]">
+            {isUsingCustom ? "Custom bg active" : "Change bg"}
+          </span>
+          <ChevronDown
+            size={14}
+            className={`text-[#765762] transition-transform duration-200 ${isBgDropdownOpen ? "rotate-180" : ""}`}
+          />
+        </motion.button>
+
+        {/* Dropdown Menu Popover */}
+        <AnimatePresence>
+          {isBgDropdownOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="absolute left-0 top-full mt-2.5 w-[330px] sm:w-[380px] rounded-2xl bg-white/95 backdrop-blur-xl border border-pink-100 shadow-[0_20px_50px_rgba(70,30,50,0.2)] p-4 z-50 overflow-hidden text-[#4a3b32]"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-pink-100/70">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-7 h-7 rounded-full bg-pink-100/80 text-pink-600">
+                    <Sparkles size={14} />
+                  </span>
+                  <div>
+                    <h4 className="font-['Playfair_Display',serif] font-bold text-sm text-[#3d2730]">
+                      Background Scenery
+                    </h4>
+                    <p className="font-['Poppins',sans-serif] text-[10px] text-[#8c6b77]">
+                      Paste an Unsplash link or pick a preset
+                    </p>
+                  </div>
+                </div>
+                {(isUsingCustom || bgIndex !== 0) && (
+                  <button
+                    type="button"
+                    onClick={handleResetToDefault}
+                    className="flex items-center gap-1 text-[11px] font-medium text-pink-600 hover:text-pink-800 transition-colors bg-pink-50 hover:bg-pink-100 px-2 py-1 rounded-full cursor-pointer"
+                    title="Reset to original stationery watercolor"
+                  >
+                    <RotateCcw size={11} />
+                    <span>Reset</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Unsplash Input Section */}
+              <div className="mt-3.5">
+                <label className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-1.5">
+                  Paste Unsplash / Image Link
+                </label>
+                <form onSubmit={handleApplyCustomUrl} className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type="url"
+                      value={unsplashInput}
+                      onChange={(e) => {
+                        setUnsplashInput(e.target.value);
+                        if (unsplashError) setUnsplashError(null);
+                      }}
+                      placeholder="https://unsplash.com/photos/..."
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-pink-200/80 bg-white/80 focus:bg-white focus:outline-none focus:ring-2 focus:ring-pink-300 transition-all font-['Poppins',sans-serif] text-[#3d2730] placeholder:text-gray-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-3.5 py-2 rounded-xl text-xs font-semibold font-['Poppins',sans-serif] bg-gradient-to-r from-pink-500 to-[#c4587a] text-white shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    Apply
+                  </button>
+                </form>
+
+                {unsplashError && (
+                  <p className="mt-1 text-[11px] text-red-500 font-['Poppins',sans-serif]">
+                    {unsplashError}
+                  </p>
+                )}
+
+                {/* Helpful tip with link to Unsplash */}
+                <div className="flex items-center justify-between mt-1.5 text-[10px] text-[#8c6b77] font-['Poppins',sans-serif]">
+                  <span>Paste any Unsplash photo or CDN image</span>
+                  <a
+                    href="https://unsplash.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 text-pink-600 hover:underline"
+                  >
+                    Browse Unsplash <ExternalLink size={9} />
+                  </a>
+                </div>
+
+                {/* Active Custom Background Badge */}
+                {isUsingCustom && (
+                  <div className="mt-2.5 flex items-center justify-between p-2 rounded-xl bg-pink-50/80 border border-pink-200/80">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img
+                        src={activeCustomBg}
+                        alt="Current custom"
+                        className="w-7 h-7 rounded-lg object-cover border border-pink-200 shrink-0"
+                      />
+                      <span className="font-['Poppins',sans-serif] text-[11px] text-pink-800 font-medium truncate">
+                        Custom Unsplash active
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetToDefault}
+                      className="text-pink-600 hover:text-red-600 p-1 rounded-md transition-colors shrink-0 cursor-pointer"
+                      title="Remove custom image"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Presets Grid */}
+              <div className="mt-4 pt-3 border-t border-pink-100/70">
+                <span className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-2">
+                  Curated Scenery Presets
+                </span>
+                <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
+                  {PRESET_BACKGROUNDS.map((preset, idx) => {
+                    const isSelected = !isUsingCustom && bgIndex === idx;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleSelectPreset(idx)}
+                        className={`group relative flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${
+                          isSelected
+                            ? "bg-pink-100/70 border-pink-400 ring-2 ring-pink-300 shadow-xs"
+                            : "bg-white/60 hover:bg-white border-pink-100/90 hover:border-pink-300"
+                        }`}
+                      >
+                        <img
+                          src={preset.thumbnail}
+                          alt={preset.name}
+                          className="w-9 h-9 rounded-lg object-cover shrink-0 border border-black/5"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-['Poppins',sans-serif] text-[11px] font-semibold text-[#3d2730] truncate group-hover:text-pink-700">
+                            {preset.name}
+                          </p>
+                          <p className="font-['Poppins',sans-serif] text-[9px] text-[#8c6b77] truncate">
+                            {preset.subtitle}
+                          </p>
+                        </div>
+                        {isSelected && (
+                          <div className="shrink-0 w-4 h-4 rounded-full bg-pink-600 text-white flex items-center justify-center">
+                            <Check size={10} strokeWidth={3} />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       <motion.button
         className={`absolute bottom-6 left-7 z-30 flex items-center gap-2 rounded-full px-5 py-3 font-['Poppins',sans-serif] text-[13px] shadow-lg backdrop-blur-md ${
