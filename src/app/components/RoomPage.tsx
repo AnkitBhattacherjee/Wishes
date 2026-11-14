@@ -377,6 +377,12 @@ export default function RoomPage() {
   const [showMusicMenu, setShowMusicMenu] = useState<boolean>(false);
   const [isUploadingSong, setIsUploadingSong] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage((curr) => (curr === msg ? null : curr)), 5000);
+  };
 
   // Active cake preview
   const activeCakeKey = hoveredCake || selectedCake;
@@ -550,23 +556,25 @@ export default function RoomPage() {
       });
       setProject(next);
       persistGiftProject(next).catch(() => {});
-      setShowMusicMenu(false);
+      setShowMusicMenu(true);
 
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.load();
+          audioRef.current.muted = false;
+          setIsMuted(false);
           startAudioPlayback();
         }
-      }, 300);
+      }, 150);
 
-      if (cloudUrl) {
-        alert("🎉 Your song has been uploaded and saved to the cloud! When the receiver opens the link, this song will play automatically.");
-      } else {
-        alert("Song saved for local playback! To ensure the receiver hears your custom song across all devices, you can also paste a YouTube link or direct audio link.");
-      }
+      showToast(
+        cloudUrl
+          ? "🎉 Song uploaded to Supabase! Playing preview now... ✨"
+          : "🎵 Song saved! Playing preview now... ✨"
+      );
     } catch (err) {
       console.error("Audio upload failed:", err);
-      alert("Could not process this audio file. Please try another MP3 or paste a YouTube song link.");
+      showToast("Could not process this audio file. Please try another MP3 or audio link.");
     } finally {
       setIsUploadingSong(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -591,13 +599,14 @@ export default function RoomPage() {
       });
       setProject(next);
       persistGiftProject(next).catch(() => {});
-      setShowMusicMenu(false);
+      setShowMusicMenu(true);
       setYoutubeInput("");
+      showToast("🎉 YouTube song saved! Playing preview now... ✨");
       setTimeout(() => {
         sendYtCommand("unMute");
         sendYtCommand("playVideo");
         setIsPlaying(true);
-      }, 600);
+      }, 500);
       return;
     }
 
@@ -616,14 +625,17 @@ export default function RoomPage() {
       });
       setProject(next);
       persistGiftProject(next).catch(() => {});
-      setShowMusicMenu(false);
+      setShowMusicMenu(true);
       setYoutubeInput("");
+      showToast("🎉 Suno AI song saved! Playing preview now... ✨");
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.load();
+          audioRef.current.muted = false;
+          setIsMuted(false);
           startAudioPlayback();
         }
-      }, 300);
+      }, 200);
       return;
     }
 
@@ -649,14 +661,17 @@ export default function RoomPage() {
       });
       setProject(next);
       persistGiftProject(next).catch(() => {});
-      setShowMusicMenu(false);
+      setShowMusicMenu(true);
       setYoutubeInput("");
+      showToast("🎉 Custom audio saved! Playing preview now... ✨");
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.load();
+          audioRef.current.muted = false;
+          setIsMuted(false);
           startAudioPlayback();
         }
-      }, 300);
+      }, 200);
       return;
     }
 
@@ -816,6 +831,20 @@ export default function RoomPage() {
         onChange={handleUploadCustomSong}
         className="hidden"
       />
+
+      {/* ── Audio Status Toast Banner (Non-blocking) ── */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-16 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-full bg-black/90 border border-pink-400/60 text-white text-xs font-semibold shadow-2xl backdrop-blur-xl flex items-center gap-2 pointer-events-none"
+          >
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Background Ambient Bloom ── */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -1074,18 +1103,32 @@ export default function RoomPage() {
                     </div>
                   </button>
 
-                  {/* Active Song Status Card */}
-                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                  {/* Active Song Status Card with Instant Preview Controls */}
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <Disc size={15} className={`text-pink-400 shrink-0 ${isPlaying ? "animate-spin" : ""}`} />
+                      <Disc size={16} className={`text-pink-400 shrink-0 ${isPlaying ? "animate-spin" : ""}`} />
                       <div className="flex flex-col min-w-0">
                         <span className="text-[11px] font-bold text-white truncate">{songTitle}</span>
-                        <span className="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
+                        <span className="text-[9.5px] text-emerald-300 font-semibold flex items-center gap-1">
                           <Check size={11} strokeWidth={2.5} />
                           {youtubeId ? "YouTube track saved for receiver" : project.customSongUrl ? "Cloud audio saved for receiver" : "Default celebration audio"}
                         </span>
                       </div>
                     </div>
+
+                    {/* Dedicated Sender Play/Pause Preview Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePlay();
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-bold text-[10.5px] flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer shrink-0 transition-transform"
+                      title={isPlaying ? "Pause music" : "Play preview"}
+                    >
+                      {isPlaying ? <Pause size={11} fill="currentColor" /> : <Play size={11} fill="currentColor" />}
+                      <span>{isPlaying ? "Pause" : "Play Preview"}</span>
+                    </button>
                   </div>
 
                   {/* Reset to default song */}

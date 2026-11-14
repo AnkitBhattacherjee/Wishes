@@ -225,6 +225,12 @@ export function MailboxModal({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<number | null>(null);
 
+  // Audio preview in Add modal & Puppet Audio File Upload
+  const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const puppetAudioInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingPuppetAudio, setIsUploadingPuppetAudio] = useState(false);
+
   // Soft toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -346,6 +352,68 @@ export function MailboxModal({
       showToast("YouTube link updated! Playing directly in site 🎵");
     } else {
       showToast("Song link updated! 🎵");
+    }
+  };
+
+  // Handle direct MP3/Audio file upload on active puppet song scroll
+  const handlePuppetAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeItem) return;
+    setIsUploadingPuppetAudio(true);
+    try {
+      const localPreview = URL.createObjectURL(file);
+      const fileName = file.name.replace(/\.[^/.]+$/, "");
+      const tempItem: MailboxBubbleItem = {
+        ...activeItem,
+        songSource: "audio",
+        audioUrl: localPreview,
+        youtubeUrl: undefined,
+        youtubeId: undefined,
+        artist: fileName,
+      };
+      setActiveItem(tempItem);
+
+      // Upload to Supabase Storage
+      let cloudUrl: string | null = null;
+      try {
+        cloudUrl = await uploadGiftFile(file);
+      } catch (err) {
+        console.warn("Puppet audio upload fallback to local:", err);
+      }
+
+      const finalItem: MailboxBubbleItem = {
+        ...tempItem,
+        audioUrl: cloudUrl || localPreview,
+      };
+      setActiveItem(finalItem);
+
+      const exists = items.some(
+        (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+      );
+      const updated = exists
+        ? items.map((i) =>
+            i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+              ? finalItem
+              : i
+          )
+        : [...items, finalItem];
+      updateItems(updated);
+      showToast("🎵 Audio uploaded to cloud! Playing preview now... ✨");
+
+      // Auto play for sender to listen immediately
+      setTimeout(() => {
+        const media = getActiveMedia();
+        if (media) {
+          media.load();
+          media.play().catch(() => {});
+          setIsPlayingAudio(true);
+        }
+      }, 200);
+    } catch {
+      alert("Could not process this audio file. Please try another MP3 or audio format.");
+    } finally {
+      setIsUploadingPuppetAudio(false);
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -1374,17 +1442,38 @@ export function MailboxModal({
                               </p>
                             )}
 
-                            {/* Quick Edit YouTube or Suno AI Link */}
-                            <div className="w-full mt-1 pt-1 border-t border-amber-400/20 flex flex-col items-center">
-                              {!isEditingYtOnCard ? (
-                                <button
-                                  onClick={() => setIsEditingYtOnCard(true)}
-                                  className="flex items-center gap-1 text-[10px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer"
-                                >
-                                  <Edit3 size={11} />
-                                  <span>{activeItem.youtubeId || activeItem.audioUrl ? "Change Song (YouTube or Suno AI)" : "Paste YouTube or Suno AI Link"}</span>
-                                </button>
-                              ) : (
+                            {/* Quick Edit YouTube or Suno AI Link & Upload Audio File */}
+                            {!isReceiver && (
+                              <div className="w-full mt-1 pt-1 border-t border-amber-400/20 flex flex-col items-center">
+                                {!isEditingYtOnCard ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setIsEditingYtOnCard(true)}
+                                      className="flex items-center gap-1 text-[10px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer"
+                                    >
+                                      <Edit3 size={11} />
+                                      <span>{activeItem.youtubeId || activeItem.audioUrl ? "Change Song Link" : "Paste YouTube / Suno Link"}</span>
+                                    </button>
+                                    <span className="text-amber-400/40">•</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => puppetAudioInputRef.current?.click()}
+                                      disabled={isUploadingPuppetAudio}
+                                      className="flex items-center gap-1 text-[10px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer disabled:opacity-50"
+                                    >
+                                      <Upload size={11} />
+                                      <span>{isUploadingPuppetAudio ? "Uploading... ⏳" : "Upload MP3"}</span>
+                                    </button>
+                                    <input
+                                      ref={puppetAudioInputRef}
+                                      type="file"
+                                      accept="audio/*"
+                                      onChange={handlePuppetAudioUpload}
+                                      className="hidden"
+                                    />
+                                  </div>
+                                ) : (
                                 <div className="w-full flex flex-col gap-1 mt-1">
                                   <input
                                     type="text"
@@ -1410,6 +1499,7 @@ export function MailboxModal({
                                 </div>
                               )}
                             </div>
+                            )}
                           </div>
                         )}
 
@@ -2083,6 +2173,44 @@ export function MailboxModal({
                           className="hidden"
                         />
                       </label>
+
+                      {/* Interactive Sender Audio Preview Player */}
+                      {newAudioUrl && (
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-amber-100/90 border border-amber-300 w-full mt-1 shadow-xs">
+                          <div className="flex items-center gap-2">
+                            <Disc size={16} className={`text-amber-700 ${isPreviewAudioPlaying ? "animate-spin" : ""}`} />
+                            <div className="flex flex-col text-left">
+                              <span className="text-xs font-bold text-amber-900">Audio Preview Ready</span>
+                              <span className="text-[10px] text-amber-700/80">Listen to verify before saving</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!previewAudioRef.current) return;
+                              if (isPreviewAudioPlaying) {
+                                previewAudioRef.current.pause();
+                                setIsPreviewAudioPlaying(false);
+                              } else {
+                                previewAudioRef.current.play().catch(() => {});
+                                setIsPreviewAudioPlaying(true);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs cursor-pointer shadow-sm active:scale-95 transition-transform"
+                          >
+                            {isPreviewAudioPlaying ? <Pause size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
+                            <span>{isPreviewAudioPlaying ? "Pause" : "Listen Preview"}</span>
+                          </button>
+                          <audio
+                            ref={previewAudioRef}
+                            src={newAudioUrl}
+                            onPlay={() => setIsPreviewAudioPlaying(true)}
+                            onPause={() => setIsPreviewAudioPlaying(false)}
+                            onEnded={() => setIsPreviewAudioPlaying(false)}
+                            className="hidden"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
 
