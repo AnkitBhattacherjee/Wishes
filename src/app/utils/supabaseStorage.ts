@@ -19,6 +19,11 @@ export function isSupabaseConfigured(): boolean {
   if (!projectId || !publicAnonKey) return false;
   if (projectId === "ntzwbdmeklynoxbczgch") return false;
   if (projectId.includes("YOUR_") || publicAnonKey.includes("YOUR_")) return false;
+  // Supabase anon keys are JWTs that start with "eyJ" — reject non-JWT keys
+  if (!publicAnonKey.startsWith("eyJ")) {
+    console.warn("[Supabase] Key does not look like a valid JWT anon key, skipping Supabase storage.");
+    return false;
+  }
   return true;
 }
 

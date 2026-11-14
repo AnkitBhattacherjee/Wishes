@@ -1,14 +1,20 @@
+/**
+ * Reliable cloud image uploader — multiple free providers with automatic fallback.
+ * All images are pre-compressed to WebP/JPEG before upload for faster transfer.
+ *
+ * Provider priority:
+ * 1. Catbox.moe     — Permanent, direct URL, CORS-friendly
+ * 2. 0x0.st         — Permanent, direct URL
+ * 3. tmpfiles.org   — Fast, direct /dl/ link
+ * 4. Litterbox      — 72-hour temporary
+ * 5. Filebin.net    — Bin-based host
+ * 6. Supabase       — Only if properly configured
+ */
+
 import { isSupabaseConfigured, uploadToSupabaseStorage } from "./supabaseStorage";
 
 /**
- * Fast & reliable cloud image uploader for user photos in Scrapbook and Putul Khela.
- * Prioritizes personal Supabase Storage if configured; falls back to permanent Catbox host,
- * tmpfiles, litterbox, and pre-compressed lightweight WebP.
- */
-
-/**
- * Pre-compress an image File or Blob to a lightweight WebP/JPEG Blob (~60-120KB)
- * so uploads finish in <1 second and use minimal bandwidth.
+ * Pre-compress image to WebP/JPEG Blob for fast upload
  */
 export async function compressImageToBlob(
   file: File | Blob,
@@ -35,26 +41,22 @@ export async function compressImageToBlob(
 
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        // Try WebP first for optimal compression
         canvas.toBlob(
           (blob) => {
             if (blob) {
-              const previewUrl = URL.createObjectURL(blob);
               resolve({
                 blob,
-                fileName: "memory-photo.webp",
-                previewUrl,
+                fileName: `photo_${Date.now()}.webp`,
+                previewUrl: URL.createObjectURL(blob),
               });
             } else {
-              // Fallback to JPEG
               canvas.toBlob(
                 (jpegBlob) => {
                   if (jpegBlob) {
-                    const previewUrl = URL.createObjectURL(jpegBlob);
                     resolve({
                       blob: jpegBlob,
-                      fileName: "memory-photo.jpg",
-                      previewUrl,
+                      fileName: `photo_${Date.now()}.jpg`,
+                      previewUrl: URL.createObjectURL(jpegBlob),
                     });
                   } else {
                     reject(new Error("Failed to create image blob"));
@@ -75,13 +77,15 @@ export async function compressImageToBlob(
   });
 }
 
-// Provider 2: Catbox Permanent (Free permanent direct image hosting, never expires)
+// ─── Provider 1: Catbox.moe (PERMANENT) ───
 async function uploadToCatbox(blob: Blob, fileName: string): Promise<string> {
+  console.log("[Image Cloud] 🔄 Trying Catbox.moe...");
   const formData = new FormData();
   formData.append("reqtype", "fileupload");
   formData.append("fileToUpload", blob, fileName);
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 16000);
+  const timer = setTimeout(() => controller.abort(), 25000);
 
   try {
     const res = await fetch("https://catbox.moe/user/api.php", {
@@ -89,23 +93,53 @@ async function uploadToCatbox(blob: Blob, fileName: string): Promise<string> {
       body: formData,
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`catbox status ${res.status}`);
+    if (!res.ok) throw new Error(`Catbox HTTP ${res.status}`);
     const text = (await res.text()).trim();
     if (text.startsWith("http")) {
+      console.log("[Image Cloud] ✅ Catbox success:", text);
       return text;
     }
-    throw new Error("Invalid response from catbox");
+    throw new Error(`Catbox returned: ${text.slice(0, 100)}`);
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Provider 3: tmpfiles.org (Fast upload, direct /dl/ link)
-async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
+// ─── Provider 2: 0x0.st (PERMANENT) ───
+async function uploadTo0x0(blob: Blob, fileName: string): Promise<string> {
+  console.log("[Image Cloud] 🔄 Trying 0x0.st...");
   const formData = new FormData();
   formData.append("file", blob, fileName);
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const res = await fetch("https://0x0.st", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`0x0.st HTTP ${res.status}`);
+    const url = (await res.text()).trim();
+    if (url.startsWith("http")) {
+      console.log("[Image Cloud] ✅ 0x0.st success:", url);
+      return url;
+    }
+    throw new Error(`0x0.st returned: ${url.slice(0, 100)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Provider 3: tmpfiles.org ───
+async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
+  console.log("[Image Cloud] 🔄 Trying tmpfiles.org...");
+  const formData = new FormData();
+  formData.append("file", blob, fileName);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
     const res = await fetch("https://tmpfiles.org/api/v1/upload", {
@@ -113,10 +147,12 @@ async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
       body: formData,
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`tmpfiles status ${res.status}`);
+    if (!res.ok) throw new Error(`tmpfiles HTTP ${res.status}`);
     const json = await res.json();
     if (json?.data?.url) {
-      return String(json.data.url).replace("tmpfiles.org/", "tmpfiles.org/dl/");
+      const directUrl = String(json.data.url).replace("tmpfiles.org/", "tmpfiles.org/dl/");
+      console.log("[Image Cloud] ✅ tmpfiles success:", directUrl);
+      return directUrl;
     }
     throw new Error("No URL in tmpfiles response");
   } finally {
@@ -124,14 +160,16 @@ async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
   }
 }
 
-// Provider 4: Catbox Litterbox (Direct fast image hosting)
+// ─── Provider 4: Litterbox (72h temp) ───
 async function uploadToLitterbox(blob: Blob, fileName: string): Promise<string> {
+  console.log("[Image Cloud] 🔄 Trying Litterbox...");
   const formData = new FormData();
   formData.append("reqtype", "fileupload");
   formData.append("time", "72h");
   formData.append("fileToUpload", blob, fileName);
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 20000);
 
   try {
     const res = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", {
@@ -139,78 +177,86 @@ async function uploadToLitterbox(blob: Blob, fileName: string): Promise<string> 
       body: formData,
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`litterbox status ${res.status}`);
+    if (!res.ok) throw new Error(`Litterbox HTTP ${res.status}`);
     const text = (await res.text()).trim();
     if (text.startsWith("http")) {
+      console.log("[Image Cloud] ✅ Litterbox success:", text);
       return text;
     }
-    throw new Error("Invalid response from litterbox");
+    throw new Error(`Litterbox returned: ${text.slice(0, 100)}`);
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Provider 5: Filebin
+// ─── Provider 5: Filebin.net ───
 async function uploadToFilebin(blob: Blob, fileName: string): Promise<string> {
-  const binId = "wish-img-" + Math.random().toString(36).substring(2, 10);
+  console.log("[Image Cloud] 🔄 Trying Filebin.net...");
+  const binId = "wish-img-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const cleanName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
     const res = await fetch(`https://filebin.net/${binId}/${cleanName}`, {
       method: "POST",
-      headers: {
-        "Content-Type": blob.type || "image/webp",
-      },
+      headers: { "Content-Type": blob.type || "image/webp" },
       body: blob,
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`filebin status ${res.status}`);
-    return `https://filebin.net/${binId}/${cleanName}`;
+    if (!res.ok) throw new Error(`Filebin HTTP ${res.status}`);
+    const url = `https://filebin.net/${binId}/${cleanName}`;
+    console.log("[Image Cloud] ✅ Filebin success:", url);
+    return url;
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * Upload an image with automatic pre-compression and multi-provider fallback.
- * Priority: 1. Supabase Storage -> 2. Catbox Permanent -> 3. tmpfiles -> 4. litterbox -> 5. filebin.
- * Returns a permanent or direct HTTPS image URL (~45-80 chars).
+ * Upload an image with pre-compression and multi-provider fallback.
+ * Returns a permanent HTTPS URL, or a compact base64 data URL as last resort.
  */
 export async function uploadImageToCloud(file: File | Blob): Promise<string> {
   const { blob, fileName } = await compressImageToBlob(file, 1200, 0.82);
+  console.log(`[Image Cloud] 📸 Starting upload: "${fileName}" (${(blob.size / 1024).toFixed(1)}KB)`);
 
-  const providers: { name: string; fn: () => Promise<string> }[] = [];
+  const providers: { name: string; fn: () => Promise<string> }[] = [
+    { name: "catbox", fn: () => uploadToCatbox(blob, fileName) },
+    { name: "0x0.st", fn: () => uploadTo0x0(blob, fileName) },
+    { name: "tmpfiles", fn: () => uploadToTmpFiles(blob, fileName) },
+    { name: "litterbox", fn: () => uploadToLitterbox(blob, fileName) },
+    { name: "filebin", fn: () => uploadToFilebin(blob, fileName) },
+  ];
 
   if (isSupabaseConfigured()) {
     providers.push({
-      name: "supabase-storage",
+      name: "supabase",
       fn: () => uploadToSupabaseStorage(blob, "wish-media", fileName),
     });
   }
 
-  providers.push(
-    { name: "catbox", fn: () => uploadToCatbox(blob, fileName) },
-    { name: "tmpfiles", fn: () => uploadToTmpFiles(blob, fileName) },
-    { name: "litterbox", fn: () => uploadToLitterbox(blob, fileName) },
-    { name: "filebin", fn: () => uploadToFilebin(blob, fileName) },
-  );
+  const errors: string[] = [];
 
   for (const provider of providers) {
     try {
       const url = await provider.fn();
       if (url && url.startsWith("http")) {
-        console.log(`[Image Upload] ✅ Uploaded successfully via ${provider.name}:`, url);
+        console.log(`[Image Cloud] 🎉 UPLOAD SUCCESS via ${provider.name}: ${url}`);
         return url;
       }
-    } catch (err) {
-      console.warn(`[Image Upload] Upload to ${provider.name} failed, trying next provider:`, err);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.warn(`[Image Cloud] ❌ ${provider.name} failed: ${msg}`);
+      errors.push(`${provider.name}: ${msg}`);
     }
   }
 
-  // If cloud providers are offline, create a tightly compressed micro-WebP base64 string (<20KB)
-  const compact = await compressImageToBlob(file, 480, 0.65);
+  console.warn("[Image Cloud] ⚠️ All cloud providers failed, creating micro base64 fallback:", errors);
+
+  // Last resort: ultra-compressed micro-WebP base64 (<20KB) that fits in share token
+  const compact = await compressImageToBlob(file, 480, 0.55);
   return new Promise<string>((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
