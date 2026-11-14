@@ -2,8 +2,8 @@ import { isSupabaseConfigured, uploadToSupabaseStorage } from "./supabaseStorage
 
 /**
  * Fast & reliable cloud image uploader for user photos in Scrapbook and Putul Khela.
- * Prioritizes personal Supabase Storage if configured; falls back to public storage with
- * pre-compressed lightweight WebP (~60-120KB) so uploads finish in <1 second.
+ * Prioritizes personal Supabase Storage if configured; falls back to permanent Catbox host,
+ * tmpfiles, litterbox, and pre-compressed lightweight WebP.
  */
 
 /**
@@ -75,7 +75,32 @@ export async function compressImageToBlob(
   });
 }
 
-// Provider 1: tmpfiles.org (Fast upload, direct /dl/ link)
+// Provider 2: Catbox Permanent (Free permanent direct image hosting, never expires)
+async function uploadToCatbox(blob: Blob, fileName: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("reqtype", "fileupload");
+  formData.append("fileToUpload", blob, fileName);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 16000);
+
+  try {
+    const res = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`catbox status ${res.status}`);
+    const text = (await res.text()).trim();
+    if (text.startsWith("http")) {
+      return text;
+    }
+    throw new Error("Invalid response from catbox");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Provider 3: tmpfiles.org (Fast upload, direct /dl/ link)
 async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
   const formData = new FormData();
   formData.append("file", blob, fileName);
@@ -99,7 +124,7 @@ async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
   }
 }
 
-// Provider 2: Catbox Litterbox (Direct fast image hosting)
+// Provider 4: Catbox Litterbox (Direct fast image hosting)
 async function uploadToLitterbox(blob: Blob, fileName: string): Promise<string> {
   const formData = new FormData();
   formData.append("reqtype", "fileupload");
@@ -125,7 +150,7 @@ async function uploadToLitterbox(blob: Blob, fileName: string): Promise<string> 
   }
 }
 
-// Provider 3: Filebin
+// Provider 5: Filebin
 async function uploadToFilebin(blob: Blob, fileName: string): Promise<string> {
   const binId = "wish-img-" + Math.random().toString(36).substring(2, 10);
   const cleanName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -150,7 +175,8 @@ async function uploadToFilebin(blob: Blob, fileName: string): Promise<string> {
 
 /**
  * Upload an image with automatic pre-compression and multi-provider fallback.
- * Returns a permanent or direct HTTPS image URL (~45 chars).
+ * Priority: 1. Supabase Storage -> 2. Catbox Permanent -> 3. tmpfiles -> 4. litterbox -> 5. filebin.
+ * Returns a permanent or direct HTTPS image URL (~45-80 chars).
  */
 export async function uploadImageToCloud(file: File | Blob): Promise<string> {
   const { blob, fileName } = await compressImageToBlob(file, 1200, 0.82);
@@ -165,6 +191,7 @@ export async function uploadImageToCloud(file: File | Blob): Promise<string> {
   }
 
   providers.push(
+    { name: "catbox", fn: () => uploadToCatbox(blob, fileName) },
     { name: "tmpfiles", fn: () => uploadToTmpFiles(blob, fileName) },
     { name: "litterbox", fn: () => uploadToLitterbox(blob, fileName) },
     { name: "filebin", fn: () => uploadToFilebin(blob, fileName) },
@@ -174,15 +201,16 @@ export async function uploadImageToCloud(file: File | Blob): Promise<string> {
     try {
       const url = await provider.fn();
       if (url && url.startsWith("http")) {
+        console.log(`[Image Upload] ✅ Uploaded successfully via ${provider.name}:`, url);
         return url;
       }
     } catch (err) {
-      console.warn(`Image upload to ${provider.name} failed, trying next provider:`, err);
+      console.warn(`[Image Upload] Upload to ${provider.name} failed, trying next provider:`, err);
     }
   }
 
-  // If cloud providers are offline, create a tightly compressed WebP base64 string (<35KB)
-  const compact = await compressImageToBlob(file, 640, 0.7);
+  // If cloud providers are offline, create a tightly compressed micro-WebP base64 string (<20KB)
+  const compact = await compressImageToBlob(file, 480, 0.65);
   return new Promise<string>((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));

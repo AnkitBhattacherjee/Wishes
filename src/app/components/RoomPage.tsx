@@ -334,6 +334,21 @@ export default function RoomPage() {
 
   const { recipient: name, occasion, relationship, wish } = project;
 
+  // Determine if viewing as the receiver
+  const searchParams = new URLSearchParams(location.search);
+  const hashSearch =
+    typeof window !== "undefined" && window.location.hash.includes("?")
+      ? new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf("?")))
+      : null;
+  const giftParam = searchParams.get("gift") || hashSearch?.get("gift");
+  const editParam = searchParams.get("edit") || hashSearch?.get("edit");
+  const viewParam = searchParams.get("view") || hashSearch?.get("view");
+  const isReceiver = Boolean(
+    (giftParam && !editParam) ||
+      viewParam === "receiver" ||
+      (!editParam && project.isSealed && !project.editToken)
+  );
+
   // Resolve cake ID from project
   const resolveCakeKey = (val: string | null): CakeKey => {
     if (val === "cake2" || val === "butterfly") return "cake2";
@@ -371,6 +386,9 @@ export default function RoomPage() {
   const [youtubeInput, setYoutubeInput] = useState<string>("");
   const [songUrl, setSongUrl] = useState<string>(() => {
     if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+      return project.customSongUrl;
+    }
+    if (project.customSongUrl && project.customSongUrl.startsWith("data:audio")) {
       return project.customSongUrl;
     }
     return defaultBirthdaySong;
@@ -433,22 +451,33 @@ export default function RoomPage() {
   useEffect(() => {
     let isCancelled = false;
 
-    // 1. If project has a direct cloud / Supabase URL, use it immediately
-    if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+    if (project.customSongYoutubeId) {
+      // YouTube/Suno link — handled by YouTube iframe
+      setYoutubeId(project.customSongYoutubeId);
+    } else if (project.customSongUrl && project.customSongUrl.startsWith("http")) {
+      // 1. Cloud URL (Supabase, tmpfiles, catbox, etc.) — load directly, works after refresh & for receiver
       setSongUrl(project.customSongUrl);
       setYoutubeId(null);
       if (audioRef.current) {
+        audioRef.current.src = project.customSongUrl;
         audioRef.current.load();
       }
-    } else if (project.customSongYoutubeId) {
-      setYoutubeId(project.customSongYoutubeId);
-    } else {
-      // 2. Fetch locally saved / cached audio from IndexedDB across page refreshes
+    } else if (project.customSongUrl && project.customSongUrl.startsWith("data:audio")) {
+      // 2. Base64 data URL fallback — stored in localStorage, survives refresh, works for sender only
+      setSongUrl(project.customSongUrl);
+      setYoutubeId(null);
+      if (audioRef.current) {
+        audioRef.current.src = project.customSongUrl;
+        audioRef.current.load();
+      }
+    } else if (project.customSongUrl === "idb:room_custom_song") {
+      // 3. IndexedDB blob fallback — blob URL must be recreated after refresh
       getAudioObjectUrl("room_custom_song").then((blobUrl) => {
         if (!isCancelled && blobUrl) {
           setSongUrl(blobUrl);
           setYoutubeId(null);
           if (audioRef.current) {
+            audioRef.current.src = blobUrl;
             audioRef.current.load();
           }
         }
@@ -544,7 +573,7 @@ export default function RoomPage() {
     if (!file) return;
 
     if (file.size > 25 * 1024 * 1024) {
-      alert("Audio file is larger than 25MB. Please select a smaller MP3 or audio file.");
+      showToast("⚠️ Audio file is larger than 25MB. Please select a smaller MP3 or audio file.");
       return;
     }
 
@@ -552,35 +581,15 @@ export default function RoomPage() {
     const fileName = file.name.replace(/\.[^/.]+$/, "");
 
     try {
-      // 1. Immediately cache in IndexedDB for instant, zero-lag local playback
+      // 1. Immediately save to IndexedDB for local playback while upload is running
       await saveAudioBlob("room_custom_song", file);
       const localBlobUrl = URL.createObjectURL(file);
       setYoutubeId(null);
       setSongUrl(localBlobUrl);
       setSongTitle(fileName);
-
-      // 2. Upload to public cloud so receiver link will stream it everywhere
-      let cloudUrl: string | null = null;
-      try {
-        cloudUrl = await uploadAudioToCloud(file, file.name);
-      } catch (uploadErr) {
-        console.warn("Cloud audio upload failed, using local fallback:", uploadErr);
-      }
-
-      if (cloudUrl) {
-        setSongUrl(cloudUrl);
-      }
-
-      const next = saveGiftProject({
-        ...project,
-        customSongYoutubeId: null,
-        customSongUrl: cloudUrl || "idb:room_custom_song",
-        customSongName: fileName,
-      });
-      setProject(next);
-      persistGiftProject(next).catch(() => {});
       setShowMusicMenu(true);
 
+      // Play immediately so sender can hear the preview while uploading
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.load();
@@ -588,13 +597,56 @@ export default function RoomPage() {
           setIsMuted(false);
           startAudioPlayback();
         }
-      }, 150);
+      }, 100);
 
-      showToast(
-        cloudUrl
-          ? "🎉 Song uploaded to Supabase! Playing preview now... ✨"
-          : "🎵 Song saved! Playing preview now... ✨"
-      );
+      showToast("⏳ Uploading song to cloud... You can listen while it uploads!");
+
+      // 2. Try cloud upload (Supabase first, then public fallbacks)
+      let cloudUrl: string | null = null;
+      try {
+        cloudUrl = await uploadAudioToCloud(file, file.name);
+        console.log("[Audio Upload] ✅ Cloud URL obtained:", cloudUrl);
+      } catch (uploadErr) {
+        console.warn("[Audio Upload] All cloud providers failed:", uploadErr);
+      }
+
+      let savedUrl: string;
+
+      if (cloudUrl) {
+        // Best case: use permanent cloud URL
+        setSongUrl(cloudUrl);
+        savedUrl = cloudUrl;
+        if (audioRef.current) {
+          audioRef.current.src = cloudUrl;
+          audioRef.current.load();
+        }
+        showToast("🎉 Song saved to cloud! Plays after refresh & for receiver too ✨");
+      } else if (file.size <= 10 * 1024 * 1024) {
+        // Fallback: encode as base64 data URL so it survives page refresh in localStorage
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error);
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+        savedUrl = dataUrl;
+        showToast("🎵 Song saved locally! Plays after refresh. For receiver, please use a song link or fix Supabase bucket.");
+        console.log("[Audio Upload] Saved audio as base64 data URL (no cloud available)");
+      } else {
+        // Large file, can't base64 — keep idb marker but warn about refresh
+        savedUrl = "idb:room_custom_song";
+        showToast("⚠️ Cloud upload failed. Song plays now but won't load after page refresh. Try a song link instead.");
+        console.warn("[Audio Upload] File too large for base64 fallback and cloud failed.");
+      }
+
+      const next = saveGiftProject({
+        ...project,
+        customSongYoutubeId: null,
+        customSongUrl: savedUrl,
+        customSongName: fileName,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
     } catch (err) {
       console.error("Audio upload failed:", err);
       showToast("Could not process this audio file. Please try another MP3 or audio link.");
@@ -990,9 +1042,9 @@ export default function RoomPage() {
 
               {/* Rotating vinyl icon & animated sound bars */}
               <div
-                onClick={() => setShowMusicMenu((m) => !m)}
-                className="flex items-center gap-2 pr-1"
-                title="Song options & settings"
+                onClick={() => !isReceiver && setShowMusicMenu((m) => !m)}
+                className={`flex items-center gap-2 pr-1 ${!isReceiver ? "cursor-pointer" : ""}`}
+                title={!isReceiver ? "Song options & settings" : undefined}
               >
                 <Disc
                   size={16}
@@ -1170,30 +1222,34 @@ export default function RoomPage() {
           </div>
 
           {/* Decorate / Change Cake Button */}
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setIsDecorating((d) => !d)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full border text-xs font-semibold backdrop-blur-xl shadow-lg transition-all ${
-              isDecorating
-                ? "bg-pink-500 text-white border-pink-400"
-                : "bg-black/55 hover:bg-black/75 text-white/90 border-white/20"
-            }`}
-          >
-            <Palette size={15} />
-            <span>{isDecorating ? "Close Dock" : "Change Cake"}</span>
-          </motion.button>
+          {!isReceiver && (
+            <>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsDecorating((d) => !d)}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full border text-xs font-semibold backdrop-blur-xl shadow-lg transition-all ${
+                  isDecorating
+                    ? "bg-pink-500 text-white border-pink-400"
+                    : "bg-black/55 hover:bg-black/75 text-white/90 border-white/20"
+                }`}
+              >
+                <Palette size={15} />
+                <span>{isDecorating ? "Close Dock" : "Change Cake"}</span>
+              </motion.button>
 
-          {/* Share button */}
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setIsShareModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-semibold text-xs shadow-[0_4px_20px_rgba(244,114,182,0.4)] backdrop-blur-xl transition-all cursor-pointer"
-          >
-            <Share2 size={15} />
-            <span>{project.isSealed ? "Sealed 💌" : "Share"}</span>
-          </motion.button>
+              {/* Share button */}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsShareModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-semibold text-xs shadow-[0_4px_20px_rgba(244,114,182,0.4)] backdrop-blur-xl transition-all cursor-pointer"
+              >
+                <Share2 size={15} />
+                <span>{project.isSealed ? "Sealed 💌" : "Share"}</span>
+              </motion.button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1478,6 +1534,7 @@ export default function RoomPage() {
           setProject(next);
         }}
         projectId={project.projectId}
+        isReceiver={isReceiver}
       />
 
       {/* ── Seal & Share Modal ── */}

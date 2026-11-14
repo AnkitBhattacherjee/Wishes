@@ -213,6 +213,40 @@ function normalize(project: Partial<GiftProject>): GiftProject {
 export function encodeSharedProject(project: GiftProject): string {
   try {
     const { editToken, ...safeProject } = project;
+
+    // Clean mailboxItems for receiver share token:
+    // - Ephemeral blob: URLs NEVER work across devices/browsers, strip them
+    // - Clean permanent HTTPS URLs (Supabase, Catbox, etc.) are small (~80 chars) and ALWAYS preserved!
+    // - Compact base64 micro-WebP (<70KB) are preserved so photos work even without cloud!
+    if (safeProject.mailboxItems) {
+      safeProject.mailboxItems = safeProject.mailboxItems.map((item) => {
+        const cleaned = { ...item };
+        // Strip ephemeral local blob: URLs
+        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("blob:")) cleaned.photoUrl = "";
+        if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("blob:")) cleaned.voiceUrl = "";
+        if (cleaned.audioUrl && cleaned.audioUrl.startsWith("blob:")) cleaned.audioUrl = "";
+
+        // Only strip oversized data: URLs if they exceed token safety threshold
+        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("data:") && cleaned.photoUrl.length > 70000) {
+          cleaned.photoUrl = "";
+        }
+        if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("data:") && cleaned.voiceUrl.length > 250000) {
+          cleaned.voiceUrl = "";
+        }
+        if (cleaned.audioUrl && cleaned.audioUrl.startsWith("data:") && cleaned.audioUrl.length > 250000) {
+          cleaned.audioUrl = "";
+        }
+        return cleaned;
+      });
+    }
+    // Strip song blob: or oversized data: URLs
+    if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("blob:")) {
+      safeProject.customSongUrl = null;
+    }
+    if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("data:") && safeProject.customSongUrl.length > 250000) {
+      safeProject.customSongUrl = null;
+    }
+
     const json = JSON.stringify(safeProject);
     const bytes = new TextEncoder().encode(json);
     let binary = "";
@@ -317,15 +351,31 @@ export function saveGiftProject(project: GiftProject) {
     // If localStorage quota is reached, strip oversized data URLs so settings are never lost
     try {
       const sanitized = { ...next };
-      if (sanitized.customSongUrl && sanitized.customSongUrl.startsWith("data:")) {
+      if (sanitized.customSongUrl && sanitized.customSongUrl.startsWith("data:audio")) {
+        // Audio data URL too big for localStorage — fall back to idb marker
+        sanitized.customSongUrl = "idb:room_custom_song";
+        console.warn("[saveGiftProject] Audio data URL too large for localStorage, falling back to IndexedDB marker");
+      } else if (sanitized.customSongUrl && sanitized.customSongUrl.startsWith("data:")) {
         sanitized.customSongUrl = "idb:room_custom_song";
       }
       if (sanitized.mailboxItems) {
         sanitized.mailboxItems = sanitized.mailboxItems.map((item) => {
-          if (item.photoUrl && item.photoUrl.startsWith("data:") && item.photoUrl.length > 50000) {
-            return { ...item, photoUrl: "" };
+          const updated = { ...item };
+          // Strip oversized photo base64 (keep if it's a cloud https:// URL)
+          if (updated.photoUrl && updated.photoUrl.startsWith("data:") && updated.photoUrl.length > 60000) {
+            updated.photoUrl = "";
+            console.warn("[saveGiftProject] Photo data URL too large for localStorage, stripped.");
           }
-          return item;
+          // Strip oversized voice/audio base64
+          if (updated.voiceUrl && updated.voiceUrl.startsWith("data:") && updated.voiceUrl.length > 200000) {
+            updated.voiceUrl = "";
+            console.warn("[saveGiftProject] Voice data URL too large for localStorage, stripped.");
+          }
+          if (updated.audioUrl && updated.audioUrl.startsWith("data:") && updated.audioUrl.length > 200000) {
+            updated.audioUrl = "";
+            console.warn("[saveGiftProject] Audio data URL too large for localStorage, stripped.");
+          }
+          return updated;
         });
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));

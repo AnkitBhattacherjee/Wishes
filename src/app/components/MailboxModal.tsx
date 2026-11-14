@@ -224,11 +224,13 @@ export function MailboxModal({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<number | null>(null);
+  const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const [voiceUploadStatus, setVoiceUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'local'>('idle');
 
   // Audio preview in Add modal & Puppet Audio File Upload
   const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState(false);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const puppetAudioInputRef = useRef<HTMLInputElement>(null);
+  const puppetAudioInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploadingPuppetAudio, setIsUploadingPuppetAudio] = useState(false);
 
   // Soft toast notification
@@ -361,29 +363,60 @@ export function MailboxModal({
     if (!file || !activeItem) return;
     setIsUploadingPuppetAudio(true);
     try {
-      const localPreview = URL.createObjectURL(file);
+      const localBlobUrl = URL.createObjectURL(file);
       const fileName = file.name.replace(/\.[^/.]+$/, "");
+
+      // Immediately set local blob URL so sender can listen while upload runs
       const tempItem: MailboxBubbleItem = {
         ...activeItem,
         songSource: "audio",
-        audioUrl: localPreview,
+        audioUrl: localBlobUrl,
         youtubeUrl: undefined,
         youtubeId: undefined,
         artist: fileName,
       };
       setActiveItem(tempItem);
+      showToast("Uploading audio to cloud...");
 
-      // Upload to Supabase Storage
-      let cloudUrl: string | null = null;
+      // Auto-play for sender immediately
+      setTimeout(() => {
+        const media = getActiveMedia();
+        if (media) {
+          media.load();
+          media.play().catch(() => {});
+          setIsPlayingAudio(true);
+        }
+      }, 150);
+
+      // Upload to cloud (Supabase -> public fallbacks)
+      let savedUrl: string = localBlobUrl;
       try {
-        cloudUrl = await uploadGiftFile(file);
+        const result = await uploadGiftFile(file);
+        if (result && result.startsWith("http")) {
+          savedUrl = result;
+          showToast("Audio saved to cloud! Receiver can hear it too");
+        } else {
+          throw new Error("No valid cloud URL returned");
+        }
       } catch (err) {
-        console.warn("Puppet audio upload fallback to local:", err);
+        console.warn("[Puppet Audio] Cloud upload failed, using base64 fallback:", err);
+        // Base64 fallback for small files
+        if (file.size <= 10 * 1024 * 1024) {
+          savedUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(reader.error);
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          showToast("Audio saved locally. Set up Supabase bucket so receiver can hear it.");
+        } else {
+          showToast("Cloud upload failed. Audio plays now but receiver may not hear it.");
+        }
       }
 
       const finalItem: MailboxBubbleItem = {
         ...tempItem,
-        audioUrl: cloudUrl || localPreview,
+        audioUrl: savedUrl,
       };
       setActiveItem(finalItem);
 
@@ -398,19 +431,9 @@ export function MailboxModal({
           )
         : [...items, finalItem];
       updateItems(updated);
-      showToast("🎵 Audio uploaded to cloud! Playing preview now... ✨");
-
-      // Auto play for sender to listen immediately
-      setTimeout(() => {
-        const media = getActiveMedia();
-        if (media) {
-          media.load();
-          media.play().catch(() => {});
-          setIsPlayingAudio(true);
-        }
-      }, 200);
-    } catch {
-      alert("Could not process this audio file. Please try another MP3 or audio format.");
+    } catch (err) {
+      console.error("[Puppet Audio] Unexpected error:", err);
+      showToast("Could not process this audio file. Please try another MP3 or audio format.");
     } finally {
       setIsUploadingPuppetAudio(false);
       if (e.target) e.target.value = "";
@@ -457,7 +480,11 @@ export function MailboxModal({
           )
         : [...items, updatedItem];
       updateItems(updated);
-      showToast("Photo memory saved! 📸✨");
+      showToast(
+        finalUrl.startsWith("http")
+          ? "🎉 Photo saved to Supabase! Receiver can view it ✨"
+          : "📸 Photo saved! (Set up Supabase bucket so receiver can view it)"
+      );
     } catch (err) {
       alert("Could not process this photo. Please choose another image.");
     } finally {
@@ -613,19 +640,49 @@ export function MailboxModal({
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64 = reader.result as string;
-          setNewAudioUrl(base64);
-          try {
-            const publicUrl = await uploadGiftFile(audioBlob, "audio/webm");
-            if (publicUrl) setNewAudioUrl(publicUrl);
-          } catch {}
-        };
-        reader.readAsDataURL(audioBlob);
         stream.getTracks().forEach((track) => track.stop());
+
+        // Immediately give sender a local blob URL to preview right away
+        const localBlobUrl = URL.createObjectURL(audioBlob);
+        setNewAudioUrl(localBlobUrl);
+        setVoiceUploadStatus("uploading");
+        setIsUploadingVoice(true);
+
+        try {
+          // Try cloud upload (Supabase then public fallbacks)
+          let cloudUrl: string | null = null;
+          try {
+            const result = await uploadGiftFile(audioBlob, "audio/webm");
+            // Only accept real HTTPS URLs, not data: URLs returned as last-resort fallback
+            if (result && result.startsWith("http")) cloudUrl = result;
+          } catch (err) {
+            console.warn("[Voice Upload] Cloud upload failed:", err);
+          }
+
+          if (cloudUrl) {
+            setNewAudioUrl(cloudUrl);
+            setVoiceUploadStatus("done");
+            showToast("Voice note saved to cloud! Works after refresh and for receiver too");
+          } else {
+            // Encode as base64 data URL as fallback - survives localStorage if blob is small
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onerror = () => reject(reader.error);
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(audioBlob);
+            });
+            setNewAudioUrl(dataUrl);
+            setVoiceUploadStatus("local");
+            showToast("Voice note saved locally. Set up Supabase bucket so receiver can hear it too.");
+          }
+        } catch (err) {
+          console.error("[Voice Upload] Unexpected error:", err);
+          setVoiceUploadStatus("local");
+        } finally {
+          setIsUploadingVoice(false);
+        }
       };
 
       mediaRecorder.start();
@@ -650,19 +707,51 @@ export function MailboxModal({
     }
   };
 
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64 = event.target?.result as string;
-        setNewAudioUrl(base64);
-        try {
-          const publicUrl = await uploadGiftFile(file);
-          if (publicUrl) setNewAudioUrl(publicUrl);
-        } catch {}
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Immediately give local blob URL for instant preview
+    const localBlobUrl = URL.createObjectURL(file);
+    setNewAudioUrl(localBlobUrl);
+    setVoiceUploadStatus("uploading");
+    setIsUploadingVoice(true);
+
+    try {
+      // Try cloud upload (Supabase -> public fallbacks)
+      let cloudUrl: string | null = null;
+      try {
+        const result = await uploadGiftFile(file);
+        if (result && result.startsWith("http")) cloudUrl = result;
+      } catch (err) {
+        console.warn("[Audio Upload] Cloud upload failed:", err);
+      }
+
+      if (cloudUrl) {
+        setNewAudioUrl(cloudUrl);
+        setVoiceUploadStatus("done");
+        showToast("Audio saved to cloud! Works after refresh and for receiver too");
+      } else if (file.size <= 10 * 1024 * 1024) {
+        // Base64 fallback for files up to 10MB
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error);
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+        setNewAudioUrl(dataUrl);
+        setVoiceUploadStatus("local");
+        showToast("Audio saved locally. Set up Supabase bucket so receiver can hear it too.");
+      } else {
+        setVoiceUploadStatus("local");
+        showToast("Cloud upload failed. Audio plays now but receiver may not hear it. Try a song link.");
+      }
+    } catch (err) {
+      console.error("[Audio Upload] Error:", err);
+      setVoiceUploadStatus("local");
+    } finally {
+      setIsUploadingVoice(false);
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -691,6 +780,9 @@ export function MailboxModal({
 
   const handleTabChange = (type: MailboxBubbleType) => {
     setAddTab(type);
+    setNewAudioUrl(null);
+    setVoiceUploadStatus("idle");
+    setIsUploadingVoice(false);
     if (type === "song") setNewPuppetId("musician");
     else if (type === "voice") setNewPuppetId("moonboy");
     else if (type === "photo") setNewPuppetId("painter");
@@ -795,6 +887,8 @@ export function MailboxModal({
     setNewAudioUrl(null);
     setNewPhotoUrl(null);
     setNewPhotoCaption("");
+    setVoiceUploadStatus("idle");
+    setIsUploadingVoice(false);
     setIsAdding(false);
   };
 
@@ -1262,12 +1356,15 @@ export function MailboxModal({
                           <button
                             type="button"
                             onClick={handleSaveCardMessage}
-                            className="px-4 py-1 rounded-full text-[11px] font-serif font-bold text-amber-950 shadow-md border border-amber-200 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                            disabled={isUploadingEditPhoto}
+                            className={`px-4 py-1 rounded-full text-[11px] font-serif font-bold text-amber-950 shadow-md border border-amber-200 cursor-pointer transition-all hover:scale-105 active:scale-95 ${
+                              isUploadingEditPhoto ? "opacity-60 pointer-events-none" : ""
+                            }`}
                             style={{
                               background: "linear-gradient(135deg, #fde047 0%, #f59e0b 50%, #d97706 100%)",
                             }}
                           >
-                            Save Changes ✨
+                            {isUploadingEditPhoto ? "Uploading photo... ⏳" : "Save Changes ✨"}
                           </button>
                         </div>
 
@@ -2151,8 +2248,14 @@ export function MailboxModal({
                         <span className="text-xs font-bold text-gray-700">
                           {isRecording
                             ? `Recording: 0:${recordingSeconds.toString().padStart(2, "0")} (Tap to Stop)`
+                            : isUploadingVoice
+                            ? "⏳ Uploading to cloud..."
+                            : voiceUploadStatus === "done"
+                            ? "✅ Voice saved to cloud! Receiver can hear it."
+                            : voiceUploadStatus === "local"
+                            ? "⚠️ Saved locally. Set up Supabase bucket for receiver."
                             : newAudioUrl
-                            ? "Voice Note Recorded! ✅ Tap mic to re-record"
+                            ? "Voice Note Recorded! Tap mic to re-record"
                             : "Tap mic to start recording"}
                         </span>
                       </div>
@@ -2163,14 +2266,19 @@ export function MailboxModal({
                         <span className="flex-1 h-[1px] bg-gray-200" />
                       </div>
 
-                      <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dashed border-amber-300 bg-white hover:bg-amber-50 cursor-pointer text-amber-800 font-semibold text-xs">
-                        <Upload size={13} />
-                        <span>Upload Voice Audio File</span>
+                      <label className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dashed border-amber-300 bg-white hover:bg-amber-50 cursor-pointer text-amber-800 font-semibold text-xs ${isUploadingVoice ? "opacity-60 pointer-events-none" : ""}`}>
+                        {isUploadingVoice ? (
+                          <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Upload size={13} />
+                        )}
+                        <span>{isUploadingVoice ? "Uploading..." : "Upload Voice Audio File"}</span>
                         <input
                           type="file"
                           accept="audio/*"
                           onChange={handleAudioUpload}
                           className="hidden"
+                          disabled={isUploadingVoice}
                         />
                       </label>
 
@@ -2343,7 +2451,7 @@ export function MailboxModal({
                   <button
                     type="button"
                     onClick={handleSaveNewItem}
-                    disabled={!newTitle.trim()}
+                    disabled={!newTitle.trim() || isUploadingVoice || isUploadingPhoto}
                     className="px-5 py-2 rounded-full text-white font-bold text-xs shadow-md hover:shadow-lg disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5"
                     style={{
                       background:
@@ -2352,8 +2460,18 @@ export function MailboxModal({
                           : "linear-gradient(135deg, #ec4899, #f43f5e)",
                     }}
                   >
-                    <Sparkles size={14} />
-                    <span>{theme === "putulkhela" ? "Add to Puppet Stage 🪆" : "Create Memory Bubble 🫧"}</span>
+                    {isUploadingVoice || isUploadingPhoto ? (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Sparkles size={14} />
+                    )}
+                    <span>
+                      {isUploadingVoice || isUploadingPhoto
+                        ? "Uploading media..."
+                        : theme === "putulkhela"
+                        ? "Add to Puppet Stage 🪆"
+                        : "Create Memory Bubble 🫧"}
+                    </span>
                   </button>
                 </div>
               </motion.div>
