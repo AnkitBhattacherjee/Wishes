@@ -28,6 +28,8 @@ import {
   uploadGiftFile,
 } from "../giftStore";
 import { extractYouTubeId, extractSunoAudioUrl, isVideoMedia } from "../utils/audioUtils";
+import { uploadAudioToCloud } from "../utils/audioCloudUpload";
+import { saveAudioBlob, getAudioObjectUrl } from "../utils/audioStorage";
 import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFont";
 import { MailboxModal } from "./MailboxModal";
 import { ShareModal } from "./ShareModal";
@@ -418,6 +420,14 @@ export default function RoomPage() {
 
   // Attempt playback on mount
   useEffect(() => {
+    if (project.customSongUrl === "idb:room_custom_song") {
+      getAudioObjectUrl("room_custom_song").then((blobUrl) => {
+        if (blobUrl) setSongUrl(blobUrl);
+      });
+    }
+  }, [project.customSongUrl]);
+
+  useEffect(() => {
     if (youtubeId) {
       setTimeout(() => {
         sendYtCommand("unMute");
@@ -491,27 +501,43 @@ export default function RoomPage() {
     setIsMuted(nextMute);
   };
 
-  // Upload Custom Song (MP3 / Audio) to Supabase Storage
+  // Upload Custom Song (MP3 / Audio) to Reliable Cloud Storage & IndexedDB
   const handleUploadCustomSong = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 15 * 1024 * 1024) {
-      alert("Audio file is larger than 15MB. Please select a smaller MP3 or audio file.");
+    if (file.size > 25 * 1024 * 1024) {
+      alert("Audio file is larger than 25MB. Please select a smaller MP3 or audio file.");
       return;
     }
 
     setIsUploadingSong(true);
+    const fileName = file.name.replace(/\.[^/.]+$/, "");
+
     try {
-      const publicUrl = await uploadGiftFile(file, file.type || "audio/mpeg");
-      const fileName = file.name.replace(/\.[^/.]+$/, "");
+      // 1. Immediately cache in IndexedDB for instant, zero-lag local playback
+      await saveAudioBlob("room_custom_song", file);
+      const localBlobUrl = URL.createObjectURL(file);
       setYoutubeId(null);
-      setSongUrl(publicUrl);
+      setSongUrl(localBlobUrl);
       setSongTitle(fileName);
+
+      // 2. Upload to public cloud so receiver link will stream it everywhere
+      let cloudUrl: string | null = null;
+      try {
+        cloudUrl = await uploadAudioToCloud(file, file.name);
+      } catch (uploadErr) {
+        console.warn("Cloud audio upload failed, using local fallback:", uploadErr);
+      }
+
+      if (cloudUrl) {
+        setSongUrl(cloudUrl);
+      }
+
       const next = saveGiftProject({
         ...project,
         customSongYoutubeId: null,
-        customSongUrl: publicUrl,
+        customSongUrl: cloudUrl || "idb:room_custom_song",
         customSongName: fileName,
       });
       setProject(next);
@@ -523,40 +549,110 @@ export default function RoomPage() {
           audioRef.current.load();
           startAudioPlayback();
         }
-      }, 250);
+      }, 300);
+
+      if (cloudUrl) {
+        alert("🎉 Your song has been uploaded and saved to the cloud! When the receiver opens the link, this song will play automatically.");
+      } else {
+        alert("Song saved for local playback! To ensure the receiver hears your custom song across all devices, you can also paste a YouTube link or direct audio link.");
+      }
     } catch (err) {
       console.error("Audio upload failed:", err);
-      alert("Failed to upload audio file to cloud storage. Please try again.");
+      alert("Could not process this audio file. Please try another MP3 or paste a YouTube song link.");
     } finally {
       setIsUploadingSong(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const handleApplyYoutubeSong = () => {
+  const handleApplySongLink = () => {
     const input = youtubeInput.trim();
     if (!input) return;
 
+    // 1. Check if YouTube link
     const ytId = extractYouTubeId(input);
-    if (!ytId) {
-      alert("Please enter a valid YouTube link (e.g. https://www.youtube.com/watch?v=... or https://youtu.be/...)");
+    if (ytId) {
+      const title = `YouTube Song for ${name} 🎵`;
+      setYoutubeId(ytId);
+      setSongTitle(title);
+      const next = saveGiftProject({
+        ...project,
+        customSongYoutubeId: ytId,
+        customSongUrl: null,
+        customSongName: title,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
+      setShowMusicMenu(false);
+      setYoutubeInput("");
+      setTimeout(() => {
+        sendYtCommand("unMute");
+        sendYtCommand("playVideo");
+        setIsPlaying(true);
+      }, 600);
       return;
     }
 
-    const title = `YouTube Song for ${name} 🎵`;
-    setYoutubeId(ytId);
-    setSongTitle(title);
-    const next = saveGiftProject({
-      ...project,
-      customSongYoutubeId: ytId,
-      customSongUrl: null,
-      customSongName: title,
-    });
-    setProject(next);
-    persistGiftProject(next).catch(() => {});
-    setShowMusicMenu(false);
-    setYoutubeInput("");
-    setIsPlaying(true);
+    // 2. Check if Suno AI link
+    const sunoDirect = extractSunoAudioUrl(input);
+    if (sunoDirect) {
+      const title = `Dedicated Suno Song for ${name} 🎵`;
+      setYoutubeId(null);
+      setSongUrl(sunoDirect);
+      setSongTitle(title);
+      const next = saveGiftProject({
+        ...project,
+        customSongYoutubeId: null,
+        customSongUrl: sunoDirect,
+        customSongName: title,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
+      setShowMusicMenu(false);
+      setYoutubeInput("");
+      setTimeout(() => {
+        if (audioRef.current) {
+          audioRef.current.load();
+          startAudioPlayback();
+        }
+      }, 300);
+      return;
+    }
+
+    // 3. Direct Audio URL (or Google Drive / Dropbox link)
+    let audioLink = input;
+    const gDriveMatch = input.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (gDriveMatch) {
+      audioLink = `https://docs.google.com/uc?export=download&id=${gDriveMatch[1]}`;
+    } else if (input.includes("dropbox.com")) {
+      audioLink = input.replace("dl=0", "raw=1").replace("www.dropbox.com", "dl.dropboxusercontent.com");
+    }
+
+    if (/^https?:\/\//i.test(audioLink)) {
+      const title = `Custom Audio for ${name} 🎵`;
+      setYoutubeId(null);
+      setSongUrl(audioLink);
+      setSongTitle(title);
+      const next = saveGiftProject({
+        ...project,
+        customSongYoutubeId: null,
+        customSongUrl: audioLink,
+        customSongName: title,
+      });
+      setProject(next);
+      persistGiftProject(next).catch(() => {});
+      setShowMusicMenu(false);
+      setYoutubeInput("");
+      setTimeout(() => {
+        if (audioRef.current) {
+          audioRef.current.load();
+          startAudioPlayback();
+        }
+      }, 300);
+      return;
+    }
+
+    alert("Please enter a valid YouTube link, Suno link, or direct audio link (e.g. https://...).");
   };
 
   const handleResetSong = () => {
@@ -901,28 +997,28 @@ export default function RoomPage() {
                     This song plays in the background when your beloved one opens the birthday room!
                   </p>
 
-                  {/* YouTube Song Link Section */}
+                  {/* Song Link (YouTube, Direct MP3, Suno AI, Drive) */}
                   <div className="flex flex-col gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30">
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold text-red-300">
                       <Music size={13} className="text-red-400" />
-                      <span>YouTube Song Link (Plays in Background)</span>
+                      <span>Song Link (YouTube, Suno AI, or MP3 Link)</span>
                     </div>
                     <p className="text-[10px] text-white/60">
-                      Paste any YouTube link (e.g. <span className="text-red-300 font-mono">youtube.com/watch?v=...</span>). Plays automatically in the background without redirecting!
+                      Paste YouTube, Suno AI, or direct audio/MP3 link. Streams in background for receiver without redirect!
                     </p>
                     <div className="flex gap-1.5 mt-0.5">
                       <input
                         type="text"
-                        placeholder="Paste YouTube link (youtube.com/watch?v=...)"
+                        placeholder="Paste link (YouTube, Suno, or https://...mp3)"
                         value={youtubeInput}
                         onChange={(e) => setYoutubeInput(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleApplyYoutubeSong();
+                          if (e.key === "Enter") handleApplySongLink();
                         }}
                         className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/20 text-[11px] text-white placeholder-white/40 outline-none focus:border-red-400"
                       />
                       <button
-                        onClick={handleApplyYoutubeSong}
+                        onClick={handleApplySongLink}
                         className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-bold text-[10px] cursor-pointer shadow-md transition-transform active:scale-95"
                       >
                         Play & Save
@@ -947,11 +1043,11 @@ export default function RoomPage() {
 
                   <div className="flex items-center gap-2 my-0.5">
                     <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR UPLOAD LOCAL AUDIO</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/40">OR UPLOAD AUDIO FILE</span>
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
 
-                  {/* Upload custom MP3 (saved to Supabase 2-day backup) */}
+                  {/* Upload custom MP3 (saved to cloud storage & IndexedDB) */}
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploadingSong}
@@ -961,28 +1057,30 @@ export default function RoomPage() {
                       <Upload size={14} className="text-pink-300" />
                       <div className="flex flex-col">
                         <span className="text-xs font-semibold text-pink-200">
-                          {isUploadingSong ? "Uploading to Cloud... ⏳" : "Upload MP3 or Audio File"}
+                          {isUploadingSong ? "Uploading to Cloud Storage... ⏳" : "Upload MP3 or Audio File"}
                         </span>
                         <span className="text-[9px] text-white/50">
-                          Saved to Supabase storage • Guaranteed to play on all mobile & desktop browsers
+                          Uploads to cloud & saves automatically • Plays when receiver opens the link! ✨
                         </span>
                       </div>
                     </div>
                   </button>
 
-                  {/* Reset to default song */}
-                  {(youtubeId || project.customSongUrl) && (
-                    <button
-                      onClick={handleResetSong}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white/80 transition-colors cursor-pointer text-left"
-                    >
-                      <RotateCcw size={14} />
-                      <span>Reset to Birthday Waltz</span>
-                    </button>
-                  )}
+                  {/* Active Song Status Card */}
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Disc size={15} className={`text-pink-400 shrink-0 ${isPlaying ? "animate-spin" : ""}`} />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-bold text-white truncate">{songTitle}</span>
+                        <span className="text-[9px] text-emerald-400 font-medium">
+                          {youtubeId ? "✓ YouTube audio connected" : project.customSongUrl ? "✓ Cloud audio stream ready" : "Default audio track"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* Reset to default song */}
-                  {project.customSongUrl && (
+                  {(youtubeId || project.customSongUrl) && (
                     <button
                       onClick={handleResetSong}
                       className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white/80 transition-colors cursor-pointer text-left"

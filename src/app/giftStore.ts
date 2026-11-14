@@ -1,4 +1,5 @@
 import { projectId as supabaseProjectId, publicAnonKey } from "../../utils/supabase/info";
+import { uploadAudioToCloud } from "./utils/audioCloudUpload";
 
 export type ScrapbookPage = {
   id: string;
@@ -288,7 +289,16 @@ export function saveGiftProject(project: GiftProject) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    // The project remains available in the current React session if storage is full.
+    // If localStorage quota is reached, strip oversized data URLs so settings are never lost
+    try {
+      const sanitized = { ...next };
+      if (sanitized.customSongUrl && sanitized.customSongUrl.startsWith("data:")) {
+        sanitized.customSongUrl = "idb:room_custom_song";
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+    } catch {
+      console.warn("Storage quota full, project preserved in memory");
+    }
   }
   if (next.editToken) {
     window.clearTimeout(saveTimer);
@@ -441,6 +451,20 @@ export async function uploadGiftPhoto(file: File): Promise<string> {
 }
 
 export async function uploadGiftFile(file: File | Blob, customMime?: string): Promise<string> {
+  // If it's an audio file, upload to cloud audio storage directly
+  const isAudio =
+    (file instanceof File && file.type.startsWith("audio/")) ||
+    (customMime && customMime.startsWith("audio/"));
+
+  if (isAudio) {
+    try {
+      const cloudUrl = await uploadAudioToCloud(file);
+      return cloudUrl;
+    } catch (err) {
+      console.warn("Cloud audio upload failed, falling back to local processing:", err);
+    }
+  }
+
   const project = loadGiftProject();
   let dataUrl: string;
 
@@ -459,11 +483,14 @@ export async function uploadGiftFile(file: File | Blob, customMime?: string): Pr
   await persistGiftProject(project).catch(() => {});
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
     const response = await fetch(`${API_URL}/projects/${project.projectId}/files`, {
       method: "POST",
       headers,
       body: JSON.stringify({ editToken: project.editToken, dataUrl }),
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) return dataUrl;
     const body = await response.json();
     return body.url || dataUrl;
