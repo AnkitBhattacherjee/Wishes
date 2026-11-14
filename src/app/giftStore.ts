@@ -348,7 +348,7 @@ export function createShareLink(project: GiftProject): string {
   return createReceiverShareLink(project);
 }
 
-function imageFileToDataUrl(file: File): Promise<string> {
+export function imageFileToDataUrl(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error);
@@ -356,13 +356,22 @@ function imageFileToDataUrl(file: File): Promise<string> {
       const image = new Image();
       image.onerror = () => reject(new Error("Could not read image"));
       image.onload = () => {
-        const maxSide = 720;
+        const maxSide = 960;
         const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round(image.width * scale));
         canvas.height = Math.max(1, Math.round(image.height * scale));
-        canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/webp", 0.68));
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          try {
+            resolve(canvas.toDataURL("image/webp", 0.82));
+            return;
+          } catch {}
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        } else {
+          resolve(String(reader.result));
+        }
       };
       image.src = String(reader.result);
     };

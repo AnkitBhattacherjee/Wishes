@@ -22,6 +22,7 @@ import {
 import {
   DEFAULT_MAILBOX_ITEMS,
   uploadGiftFile,
+  imageFileToDataUrl,
   type MailboxBubbleItem,
   type MailboxBubbleType,
   type MailboxTheme,
@@ -189,6 +190,14 @@ export function MailboxModal({
   const [isEditingYtOnCard, setIsEditingYtOnCard] = useState(false);
   const [cardYtInput, setCardYtInput] = useState("");
 
+  // Editing / uploading photo on active card
+  const [isEditingPhotoOnCard, setIsEditingPhotoOnCard] = useState(false);
+  const [isUploadingCardPhoto, setIsUploadingCardPhoto] = useState(false);
+  const [cardPhotoUrlInput, setCardPhotoUrlInput] = useState("");
+  const [cardPhotoCaptionInput, setCardPhotoCaptionInput] = useState("");
+  const cardPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
   // Live Microphone Voice Recording
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -247,7 +256,11 @@ export function MailboxModal({
       setActiveItem(item);
       setIsPlayingAudio(false);
       setIsEditingYtOnCard(false);
+      setIsEditingPhotoOnCard(false);
+      setIsUploadingCardPhoto(false);
       if (item.youtubeUrl) setCardYtInput(item.youtubeUrl);
+      if (item.photoUrl) setCardPhotoUrlInput(item.photoUrl);
+      setCardPhotoCaptionInput(item.photoCaption || item.message || "");
     }, 240);
   };
 
@@ -259,41 +272,48 @@ export function MailboxModal({
     const sunoAudio = await resolveSunoAudioUrl(input);
     const isSuno = isSunoUrl(input);
 
-    const updated = items.map((i) => {
-      if (i.id === activeItem.id) {
-        if (sunoAudio) {
-          return {
-            ...i,
-            songSource: "suno" as const,
-            sunoUrl: input,
-            audioUrl: sunoAudio,
-            youtubeUrl: undefined,
-            youtubeId: undefined,
-            artist: isSuno ? "Created with Suno AI 🎵" : (i.artist || "Dedicated Audio Track"),
-          };
-        }
-        if (ytId) {
-          return {
-            ...i,
-            songSource: "youtube" as const,
-            youtubeUrl: input,
-            youtubeId: ytId,
-            sunoUrl: undefined,
-            audioUrl: undefined,
-            artist: i.artist || "YouTube Dedicated Song",
-          };
-        }
-        return {
-          ...i,
-          youtubeUrl: input,
-          youtubeId: undefined,
-        };
-      }
-      return i;
-    });
+    let updatedItem: MailboxBubbleItem;
+    if (sunoAudio) {
+      updatedItem = {
+        ...activeItem,
+        songSource: "suno" as const,
+        sunoUrl: input,
+        audioUrl: sunoAudio,
+        youtubeUrl: undefined,
+        youtubeId: undefined,
+        artist: isSuno ? "Created with Suno AI 🎵" : (activeItem.artist || "Dedicated Audio Track"),
+      };
+    } else if (ytId) {
+      updatedItem = {
+        ...activeItem,
+        songSource: "youtube" as const,
+        youtubeUrl: input,
+        youtubeId: ytId,
+        sunoUrl: undefined,
+        audioUrl: undefined,
+        artist: activeItem.artist || "YouTube Dedicated Song",
+      };
+    } else {
+      updatedItem = {
+        ...activeItem,
+        youtubeUrl: input,
+        youtubeId: undefined,
+      };
+    }
+
+    const exists = items.some(
+      (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+    );
+    const updated = exists
+      ? items.map((i) =>
+          i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+            ? updatedItem
+            : i
+        )
+      : [...items, updatedItem];
+
     updateItems(updated);
-    const updatedActive = updated.find((i) => i.id === activeItem.id);
-    setActiveItem(updatedActive || null);
+    setActiveItem(updatedItem);
     setIsEditingYtOnCard(false);
     if (sunoAudio) {
       showToast("Suno AI song linked! Streaming directly in site 🎵");
@@ -302,6 +322,84 @@ export function MailboxModal({
     } else {
       showToast("Song link updated! 🎵");
     }
+  };
+
+  // Handle direct photo file upload on active card
+  const handleCardPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeItem) return;
+    setIsUploadingCardPhoto(true);
+    try {
+      const compressedDataUrl = await imageFileToDataUrl(file);
+      const updatedItem: MailboxBubbleItem = {
+        ...activeItem,
+        photoUrl: compressedDataUrl,
+      };
+      setActiveItem(updatedItem);
+
+      const exists = items.some(
+        (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+      );
+      const updated = exists
+        ? items.map((i) =>
+            i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+              ? updatedItem
+              : i
+          )
+        : [...items, updatedItem];
+      updateItems(updated);
+      showToast("Photo memory saved! 📸✨");
+
+      // Upload to Supabase cloud storage in background
+      try {
+        const publicUrl = await uploadGiftFile(file);
+        if (publicUrl && publicUrl !== compressedDataUrl) {
+          const cloudItem = { ...updatedItem, photoUrl: publicUrl };
+          setActiveItem(cloudItem);
+          const nextUpdated = updated.map((i) =>
+            i.id === updatedItem.id || (updatedItem.puppetId && i.puppetId === updatedItem.puppetId)
+              ? cloudItem
+              : i
+          );
+          updateItems(nextUpdated);
+        }
+      } catch (uploadErr) {
+        console.warn("Cloud photo upload deferred, stored locally", uploadErr);
+      }
+    } catch (err) {
+      alert("Could not process this photo. Please choose another image.");
+    } finally {
+      setIsUploadingCardPhoto(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  // Handle saving image URL or caption on active card
+  const handleSaveCardPhoto = () => {
+    if (!activeItem) return;
+    const url = cardPhotoUrlInput.trim();
+    const caption = cardPhotoCaptionInput.trim();
+
+    const updatedItem: MailboxBubbleItem = {
+      ...activeItem,
+      photoUrl: url || activeItem.photoUrl,
+      photoCaption: caption || activeItem.photoCaption,
+    };
+    setActiveItem(updatedItem);
+
+    const exists = items.some(
+      (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+    );
+    const updated = exists
+      ? items.map((i) =>
+          i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+            ? updatedItem
+            : i
+        )
+      : [...items, updatedItem];
+    updateItems(updated);
+    setIsEditingPhotoOnCard(false);
+    showToast("Photo & caption saved! 📸");
   };
 
   // Recording controls
@@ -369,19 +467,24 @@ export function MailboxModal({
     }
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64 = event.target?.result as string;
-        setNewPhotoUrl(base64);
-        try {
-          const publicUrl = await uploadGiftFile(file);
-          if (publicUrl) setNewPhotoUrl(publicUrl);
-        } catch {}
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    setIsUploadingPhoto(true);
+    try {
+      const compressedDataUrl = await imageFileToDataUrl(file);
+      setNewPhotoUrl(compressedDataUrl);
+      try {
+        const publicUrl = await uploadGiftFile(file);
+        if (publicUrl) setNewPhotoUrl(publicUrl);
+      } catch (uploadErr) {
+        console.warn("Cloud photo upload deferred, stored locally", uploadErr);
+      }
+    } catch {
+      alert("Could not process this image. Please choose another photo.");
+    } finally {
+      setIsUploadingPhoto(false);
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -389,7 +492,7 @@ export function MailboxModal({
     setAddTab(type);
     if (type === "song") setNewPuppetId("musician");
     else if (type === "voice") setNewPuppetId("moonboy");
-    else if (type === "photo") setNewPuppetId("artist");
+    else if (type === "photo") setNewPuppetId("painter");
     else if (type === "dream") setNewPuppetId("telescope");
     else if (type === "note") setNewPuppetId("bride");
     else if (type === "surprise") setNewPuppetId("lantern");
@@ -468,7 +571,15 @@ export function MailboxModal({
       };
     }
 
-    updateItems([...items, newItem]);
+    const existingIndex = items.findIndex((i) => newItem.puppetId && i.puppetId === newItem.puppetId);
+    let updatedList: MailboxBubbleItem[];
+    if (existingIndex >= 0) {
+      updatedList = [...items];
+      updatedList[existingIndex] = newItem;
+    } else {
+      updatedList = [...items, newItem];
+    }
+    updateItems(updatedList);
     showToast(
       theme === "putulkhela"
         ? `🎭 Memory added to ${PUPPET_CATALOG[newPuppetId]?.nameBn || "puppet"}!`
@@ -1056,18 +1167,124 @@ export function MailboxModal({
 
                     {/* 4. PHOTO */}
                     {activeItem.type === "photo" && (
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="w-full max-h-44 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/40">
+                      <div className="flex flex-col items-center gap-2 w-full">
+                        {/* Clickable Photo Frame */}
+                        <div
+                          onClick={() => cardPhotoInputRef.current?.click()}
+                          className="relative group w-full max-h-48 aspect-[4/3] rounded-xl overflow-hidden border-2 border-amber-400/80 shadow-2xl bg-black/50 cursor-pointer transition-all hover:border-amber-300"
+                          title="Click to upload or change photo"
+                        >
                           {activeItem.photoUrl ? (
-                            <img src={activeItem.photoUrl} alt={activeItem.title} className="w-full h-full object-cover" />
+                            <img
+                              src={activeItem.photoUrl}
+                              alt={activeItem.title}
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                            />
                           ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center text-amber-400 gap-1 bg-amber-950/40">
-                              <Camera size={32} />
-                              <span className="text-xs font-serif font-semibold">Special Memory Photo</span>
+                            <div className="w-full h-full flex flex-col items-center justify-center text-amber-300 gap-2 p-4 text-center bg-gradient-to-b from-amber-950/60 to-black/80">
+                              <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+                                <Camera size={26} />
+                              </div>
+                              <span className="text-xs font-serif font-bold tracking-wide">
+                                Tap here to upload a photo 📸
+                              </span>
+                              <span className="text-[10px] text-amber-200/70">
+                                (Supports JPG, PNG, WEBP from phone or PC)
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Hover Overlay when photo already exists */}
+                          {activeItem.photoUrl && (
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 text-white p-2 text-center backdrop-blur-xs">
+                              <Camera size={22} className="text-amber-400" />
+                              <span className="text-xs font-semibold font-serif text-amber-200">
+                                Click to change photo
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Uploading Spinner */}
+                          {isUploadingCardPhoto && (
+                            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-2 text-amber-300 z-10">
+                              <div className="w-7 h-7 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                              <span className="text-xs font-serif font-bold">Uploading photo... ✨</span>
                             </div>
                           )}
                         </div>
-                        <p className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2">
+
+                        {/* Hidden Native File Input */}
+                        <input
+                          ref={cardPhotoInputRef}
+                          type="file"
+                          accept="image/*"
+                          onChange={handleCardPhotoUpload}
+                          className="hidden"
+                        />
+
+                        {/* Action Buttons & Link Editor */}
+                        <div className="w-full flex flex-col items-center gap-1">
+                          {!isEditingPhotoOnCard ? (
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => cardPhotoInputRef.current?.click()}
+                                className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/90 hover:text-amber-100 transition-colors cursor-pointer bg-black/30 hover:bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40"
+                              >
+                                <Upload size={11} />
+                                <span>{activeItem.photoUrl ? "Change Photo File" : "Upload Photo File"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCardPhotoUrlInput(activeItem.photoUrl || "");
+                                  setCardPhotoCaptionInput(activeItem.photoCaption || activeItem.message || "");
+                                  setIsEditingPhotoOnCard(true);
+                                }}
+                                className="flex items-center gap-1 text-[11px] font-serif font-semibold text-amber-300/80 hover:text-amber-100 transition-colors cursor-pointer"
+                              >
+                                <Edit3 size={11} />
+                                <span>Paste Link / Caption</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="w-full flex flex-col gap-1.5 mt-1 p-2 rounded-xl bg-black/60 border border-amber-400/40">
+                              <input
+                                type="url"
+                                placeholder="Paste image or Unsplash link: https://..."
+                                value={cardPhotoUrlInput}
+                                onChange={(e) => setCardPhotoUrlInput(e.target.value)}
+                                className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Write photo caption..."
+                                value={cardPhotoCaptionInput}
+                                onChange={(e) => setCardPhotoCaptionInput(e.target.value)}
+                                className="w-full px-2.5 py-1 rounded-md border border-amber-400/50 bg-black/60 text-xs text-amber-100 placeholder-amber-400/40 outline-none"
+                              />
+                              <div className="flex items-center justify-end gap-2 pt-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setIsEditingPhotoOnCard(false)}
+                                  className="px-2 py-0.5 text-[10px] text-amber-300/70 hover:underline cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveCardPhoto}
+                                  className="px-2.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold text-[10px] cursor-pointer"
+                                >
+                                  Save Photo
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Displayed Caption */}
+                        <p className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center">
                           "{activeItem.photoCaption || activeItem.message || "A moment to keep in our hearts forever."}"
                         </p>
                       </div>
@@ -1445,15 +1662,26 @@ export function MailboxModal({
                     <div className="flex flex-col gap-3 p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/60">
                       <label className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-amber-300 bg-white hover:bg-amber-50 cursor-pointer text-amber-800 font-semibold text-xs transition-colors">
                         {newPhotoUrl ? (
-                          <img
-                            src={newPhotoUrl}
-                            alt="Preview"
-                            className="max-h-36 object-contain rounded-lg shadow-sm"
-                          />
+                          <div className="relative group">
+                            <img
+                              src={newPhotoUrl}
+                              alt="Preview"
+                              className="max-h-36 object-contain rounded-lg shadow-sm"
+                            />
+                            <div className="absolute inset-0 bg-black/40 text-white text-[11px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 rounded-lg transition-opacity">
+                              Click to choose a different photo
+                            </div>
+                          </div>
+                        ) : isUploadingPhoto ? (
+                          <div className="flex flex-col items-center gap-2 py-3">
+                            <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-amber-800 font-medium">Processing photo... ✨</span>
+                          </div>
                         ) : (
                           <>
                             <Camera size={26} className="text-amber-500" />
                             <span>Select Photo File (Click to browse)</span>
+                            <span className="text-[10px] text-amber-600/70">JPG, PNG, WEBP supported</span>
                           </>
                         )}
                         <input
@@ -1463,6 +1691,22 @@ export function MailboxModal({
                           className="hidden"
                         />
                       </label>
+
+                      {/* Or paste direct image URL */}
+                      <div>
+                        <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold my-1">
+                          <span className="flex-1 h-[1px] bg-gray-200" />
+                          <span>OR PASTE IMAGE / UNSPLASH LINK</span>
+                          <span className="flex-1 h-[1px] bg-gray-200" />
+                        </div>
+                        <input
+                          type="url"
+                          placeholder="https://images.unsplash.com/... or any photo link"
+                          value={newPhotoUrl && newPhotoUrl.startsWith("http") ? newPhotoUrl : ""}
+                          onChange={(e) => setNewPhotoUrl(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-amber-200 focus:border-amber-400 outline-none text-xs"
+                        />
+                      </div>
 
                       <div>
                         <label className="font-bold text-gray-700 block mb-1">

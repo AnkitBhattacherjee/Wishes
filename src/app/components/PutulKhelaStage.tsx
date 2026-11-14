@@ -236,15 +236,29 @@ export function PutulKhelaStage({
   // Map each of the 8 canonical puppets to its corresponding memory item
   const slotMappings = useMemo(() => {
     return STAGE_PUPPETS.map((slot) => {
-      // 1. Try explicit puppetId match
-      const explicitMatch = items.find((i) => i.puppetId === slot.key);
-      if (explicitMatch) return { slot, item: explicitMatch, isCustom: true };
+      // 1. Try explicit puppetId match (prioritize items with photos/audio or the latest one)
+      const puppetMatches = items.filter(
+        (i) => i.puppetId === slot.key || (slot.key === "painter" && i.puppetId === "artist")
+      );
+      if (puppetMatches.length > 0) {
+        const customContentMatch = puppetMatches.find(
+          (i) => i.photoUrl || i.audioUrl || i.youtubeId || i.voiceUrl
+        );
+        const bestMatch = customContentMatch || puppetMatches[puppetMatches.length - 1];
+        return { slot, item: bestMatch, isCustom: true };
+      }
 
       // 2. Try type match
-      const typeMatch = items.find(
+      const typeMatches = items.filter(
         (i) => i.type === slot.defaultType && !STAGE_PUPPETS.some((s) => s.key === i.puppetId && s.key !== slot.key)
       );
-      if (typeMatch) return { slot, item: typeMatch, isCustom: true };
+      if (typeMatches.length > 0) {
+        const customContentMatch = typeMatches.find(
+          (i) => i.photoUrl || i.audioUrl || i.youtubeId || i.voiceUrl
+        );
+        const bestMatch = customContentMatch || typeMatches[typeMatches.length - 1];
+        return { slot, item: bestMatch, isCustom: true };
+      }
 
       // 3. Fallback default item
       const defaultItem: MailboxBubbleItem = {
