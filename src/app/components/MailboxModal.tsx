@@ -1321,7 +1321,17 @@ export function MailboxModal({
 
                         {/* 2. NOTE / DREAM: Handwritten Royal Letter */}
                         {(activeItem.type === "note" || activeItem.type === "dream") && (
-                          <div className="flex flex-col items-center justify-center py-2 px-1">
+                          <div
+                            onClick={() => {
+                              setEditCardTitle(activeItem.title || "");
+                              setEditCardSender(activeItem.sender || "Your Special Person");
+                              setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                              setEditCardEmoji(activeItem.stampEmoji || "💌");
+                              setIsEditingCardMessage(true);
+                            }}
+                            className="flex flex-col items-center justify-center py-2 px-1 cursor-pointer transition-all hover:opacity-90"
+                            title="Tap to edit message ✍️"
+                          >
                             <span className="text-2xl mb-1">{activeItem.stampEmoji || "💌"}</span>
                             {activeItem.message ? (
                               <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
@@ -1329,7 +1339,7 @@ export function MailboxModal({
                               </p>
                             ) : (
                               <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
-                                (No message written yet. Tap "Edit Message ✍️" below to write one!)
+                                (No message written yet. Tap to write one!)
                               </p>
                             )}
                           </div>
@@ -1506,12 +1516,32 @@ export function MailboxModal({
 
                             {/* Displayed Caption */}
                             {(activeItem.photoCaption || activeItem.message) ? (
-                              <p className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center">
+                              <p
+                                onClick={() => {
+                                  setEditCardTitle(activeItem.title || "");
+                                  setEditCardSender(activeItem.sender || "Your Special Person");
+                                  setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                                  setEditCardEmoji(activeItem.stampEmoji || "💌");
+                                  setIsEditingCardMessage(true);
+                                }}
+                                className="font-['Caveat',cursive] text-xl text-amber-100 leading-snug px-2 text-center cursor-pointer transition-all hover:opacity-90"
+                                title="Tap to edit caption ✍️"
+                              >
                                 "{activeItem.photoCaption || activeItem.message}"
                               </p>
                             ) : (
-                              <p className="font-serif italic text-xs text-amber-200/70 px-2 my-1 text-center">
-                                (No caption yet. Tap "Edit Message ✍️" to write one!)
+                              <p
+                                onClick={() => {
+                                  setEditCardTitle(activeItem.title || "");
+                                  setEditCardSender(activeItem.sender || "Your Special Person");
+                                  setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                                  setEditCardEmoji(activeItem.stampEmoji || "💌");
+                                  setIsEditingCardMessage(true);
+                                }}
+                                className="font-serif italic text-xs text-amber-200/70 px-2 my-1 text-center cursor-pointer hover:underline"
+                                title="Tap to edit caption ✍️"
+                              >
+                                (No caption yet. Tap to write one!)
                               </p>
                             )}
                           </div>
@@ -1519,7 +1549,17 @@ export function MailboxModal({
 
                         {/* 5. SURPRISE */}
                         {activeItem.type === "surprise" && (
-                          <div className="flex flex-col items-center justify-center gap-2 py-2">
+                          <div
+                            onClick={() => {
+                              setEditCardTitle(activeItem.title || "");
+                              setEditCardSender(activeItem.sender || "Your Special Person");
+                              setEditCardMessage(activeItem.message || activeItem.photoCaption || "");
+                              setEditCardEmoji(activeItem.stampEmoji || "💌");
+                              setIsEditingCardMessage(true);
+                            }}
+                            className="flex flex-col items-center justify-center gap-2 py-2 cursor-pointer transition-all hover:opacity-90"
+                            title="Tap to edit message ✍️"
+                          >
                             <span className="text-3xl animate-bounce">✨</span>
                             {activeItem.message ? (
                               <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
@@ -1527,7 +1567,7 @@ export function MailboxModal({
                               </p>
                             ) : (
                               <p className="font-serif italic text-xs text-amber-200/70 px-2 my-2">
-                                (No surprise message yet. Tap "Edit Message ✍️" to add one!)
+                                (No surprise message yet. Tap to add one!)
                               </p>
                             )}
                           </div>

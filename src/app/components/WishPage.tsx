@@ -1234,35 +1234,10 @@ export default function WishPage() {
               "{displayFrontWish}"
             </p>
 
-            <div className="mt-3.5 pt-2.5 border-t border-[#dfc2c8]/60 w-full flex items-center justify-between text-[11px] font-medium text-[#785460] select-none px-2">
-              <span className="font-bold tracking-wider uppercase text-pink-700/80 text-[10px]">
+            <div className="mt-3.5 pt-2 border-t border-[#dfc2c8]/60 w-full flex items-center justify-center text-[11px] font-medium text-[#785460] select-none px-2">
+              <span className="font-bold tracking-widest uppercase text-pink-700/80 text-[10px]">
                 By your special person
               </span>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFrontWishModalOpen(true);
-                  }}
-                  className="text-pink-600 hover:text-pink-800 font-semibold cursor-pointer hover:underline"
-                >
-                  Edit wish ✍️
-                </button>
-                <span className="text-pink-300">·</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsModalOpen(true);
-                  }}
-                  className="text-pink-700 hover:text-pink-900 font-semibold flex items-center gap-0.5 cursor-pointer hover:underline"
-                  title="Open the complete handwritten letter paper"
-                >
-                  <span>Full letter</span>
-                  <span>💌</span>
-                </button>
-              </div>
             </div>
           </div>
         </div>
