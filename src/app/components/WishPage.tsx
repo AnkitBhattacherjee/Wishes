@@ -666,7 +666,22 @@ export default function WishPage() {
   const [isFrontWishModalOpen, setIsFrontWishModalOpen] = useState(false);
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerInput, setHeaderInput] = useState(project.headerTitle || "");
+  const [isBadgeDismissed, setIsBadgeDismissed] = useState(false);
   const headerInputRef = useRef<HTMLInputElement>(null);
+
+  // Check if viewing via the receiver's link (gift token present without edit token, or sealed project)
+  const searchParams = new URLSearchParams(location.search);
+  const hashSearch =
+    typeof window !== "undefined" && window.location.hash.includes("?")
+      ? new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf("?")))
+      : null;
+  const giftParam = searchParams.get("gift") || hashSearch?.get("gift");
+  const editParam = searchParams.get("edit") || hashSearch?.get("edit");
+  const isReceiver = Boolean(
+    (giftParam && !editParam) ||
+      searchParams.get("view") === "receiver" ||
+      (!editParam && project.isSealed && !project.editToken)
+  );
 
   useEffect(() => {
     if (project.headerTitle !== undefined) {
@@ -1108,9 +1123,12 @@ export default function WishPage() {
         {hasChanges ? (hasSaved ? "Save update" : "Save") : "Update"}
       </motion.button>
 
-      <div className="absolute bottom-6 right-7 z-30 rounded-full border border-white/30 bg-white/55 px-3 py-1.5 font-['DM_Mono',monospace] text-[9px] uppercase tracking-[0.14em] text-[#765762] backdrop-blur-md">
-        {cloudStatus === "loading" ? "Syncing to cloud…" : cloudStatus === "error" ? "Saved locally · cloud pending" : project.editToken ? "Saved to cloud" : "Shared view"}
-      </div>
+      {/* Cloud status - only shown for draft editor, not receiver */}
+      {!isReceiver && (
+        <div className="absolute bottom-6 right-7 z-30 rounded-full border border-white/30 bg-white/55 px-3 py-1.5 font-['DM_Mono',monospace] text-[9px] uppercase tracking-[0.14em] text-[#765762] backdrop-blur-md">
+          {cloudStatus === "loading" ? "Syncing to cloud…" : cloudStatus === "error" ? "Saved locally · cloud pending" : project.editToken ? "Saved to cloud" : "Shared view"}
+        </div>
+      )}
 
       {/* Guide button */}
       <motion.button
@@ -1330,26 +1348,36 @@ export default function WishPage() {
         })}
       </div>
 
-      {/* Name badge */}
-      <motion.div
-        className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5, duration: 0.6 }}
-      >
-        <div
-          className="px-6 py-3 rounded-full"
-          style={{
-            background: "rgba(255,255,255,0.7)",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)",
-          }}
+      {/* Name badge - hidden for recipient when viewing receiver link */}
+      {!isReceiver && !isBadgeDismissed && (
+        <motion.div
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5, duration: 0.6 }}
         >
-          <span className="font-['Poppins',sans-serif] text-[13px] text-[#7a6068]">
-            For <span className="text-[#c4587a]">{name}</span> — {occasion} · {relationship}
-          </span>
-        </div>
-      </motion.div>
+          <div
+            className="px-6 py-3 rounded-full flex items-center gap-2"
+            style={{
+              background: "rgba(255,255,255,0.7)",
+              backdropFilter: "blur(12px)",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)",
+            }}
+          >
+            <span className="font-['Poppins',sans-serif] text-[13px] text-[#7a6068]">
+              For <span className="text-[#c4587a]">{name}</span> — {occasion} · {relationship}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsBadgeDismissed(true)}
+              className="text-[#a68690] hover:text-[#2d1b22] text-xs ml-1 cursor-pointer transition-colors"
+              title="Hide badge"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* Front Card Wish Modal (Short single-line greeting wish) */}
       <FrontWishModal
