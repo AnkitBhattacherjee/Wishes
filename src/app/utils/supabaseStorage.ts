@@ -97,7 +97,7 @@ export async function uploadToSupabaseStorage(
   const prefix = isAudio ? "audio" : "photo";
   const uniqueId = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   // Always unique path - guarantees INSERT (never UPDATE), avoiding RLS update restrictions
-  const filePath = `${prefix}_${uniqueId}.${cleanExt}`;
+  const filePath = customFileName ? customFileName : `${prefix}_${uniqueId}.${cleanExt}`;
   const baseUrl = getSupabaseBaseUrl();
 
   // Dynamically check buckets that actually exist in the user's project
@@ -157,4 +157,159 @@ export async function uploadToSupabaseStorage(
   }
 
   throw lastError || new Error("Failed to upload to Supabase storage bucket.");
+}
+
+/**
+ * Saves full project JSON to Supabase Storage bucket so any recipient can fetch it by projectId.
+ */
+export async function saveProjectJsonToSupabaseStorage(
+  projectId: string,
+  projectData: any
+): Promise<string> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const baseUrl = getSupabaseBaseUrl();
+  const filePath = `projects/project_${projectId}.json`;
+  const jsonBlob = new Blob([JSON.stringify(projectData)], { type: "application/json" });
+
+  const existingBuckets = await getAvailableBuckets();
+  const candidateBuckets = existingBuckets.length > 0
+    ? existingBuckets
+    : ["wish-photos", "wish-media", "photos", "public"];
+
+  let lastError: Error | null = null;
+  for (const bucketName of candidateBuckets) {
+    try {
+      const uploadEndpoint = `${baseUrl}/storage/v1/object/${bucketName}/${filePath}`;
+      const res = await fetch(uploadEndpoint, {
+        method: "POST",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          "x-upsert": "true",
+        },
+        body: jsonBlob,
+      });
+
+      if (res.ok) {
+        const publicUrl = `${baseUrl}/storage/v1/object/public/${bucketName}/${filePath}`;
+        console.log(`[Supabase Storage] ✅ Saved project JSON [${bucketName}]:`, publicUrl);
+        return publicUrl;
+      }
+      const errText = await res.text().catch(() => "");
+      console.warn(`[Supabase Storage] Failed saving project JSON to [${bucketName}]:`, errText);
+      lastError = new Error(errText);
+    } catch (e: any) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error("Failed to save project JSON to Supabase Storage");
+}
+
+/**
+ * Loads full project JSON from Supabase Storage by projectId.
+ */
+export async function loadProjectJsonFromSupabaseStorage(
+  projectId: string
+): Promise<any> {
+  if (!isSupabaseConfigured() || !projectId) return null;
+  const baseUrl = getSupabaseBaseUrl();
+  const filePath = `projects/project_${projectId}.json`;
+
+  const existingBuckets = await getAvailableBuckets();
+  const candidateBuckets = existingBuckets.length > 0
+    ? existingBuckets
+    : ["wish-photos", "wish-media", "photos", "public"];
+
+  for (const bucketName of candidateBuckets) {
+    try {
+      // 1. Try public URL with cache-busting timestamp
+      const publicUrl = `${baseUrl}/storage/v1/object/public/${bucketName}/${filePath}?t=${Date.now()}`;
+      const res = await fetch(publicUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && (data.recipient || data.projectId)) {
+          console.log(`[Supabase Storage] ✅ Loaded project JSON from public [${bucketName}]`);
+          return data;
+        }
+      }
+
+      // 2. Try authenticated download with apikey in case bucket is private
+      const authUrl = `${baseUrl}/storage/v1/object/${bucketName}/${filePath}?t=${Date.now()}`;
+      const authRes = await fetch(authUrl, {
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+      });
+      if (authRes.ok) {
+        const data = await authRes.json();
+        if (data && (data.recipient || data.projectId)) {
+          console.log(`[Supabase Storage] ✅ Loaded project JSON with apikey from [${bucketName}]`);
+          return data;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Supabase Storage] Could not fetch project from [${bucketName}]:`, err);
+    }
+  }
+  return null;
+}
+
+/**
+ * Saves project JSON to Catbox (free, permanent, zero-auth, CORS *).
+ */
+export async function saveProjectJsonToCatbox(
+  projectId: string,
+  projectData: any
+): Promise<string> {
+  const jsonBlob = new Blob([JSON.stringify(projectData)], { type: "application/json" });
+  const formData = new FormData();
+  formData.append("reqtype", "fileupload");
+  formData.append("userhash", "");
+  formData.append("fileToUpload", jsonBlob, `project_${projectId}.json`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Catbox status ${res.status}`);
+    const text = (await res.text()).trim();
+    if (text.startsWith("http")) {
+      console.log(`[Catbox Storage] ✅ Saved project JSON:`, text);
+      return text;
+    }
+    throw new Error("Invalid response from Catbox");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Loads project JSON directly from a cloud URL (Catbox or any HTTPS URL).
+ */
+export async function loadProjectJsonFromUrl(url: string): Promise<any> {
+  if (!url || !url.startsWith("http")) return null;
+  try {
+    const separator = url.includes("?") ? "&" : "?";
+    const fetchUrl = `${url}${separator}t=${Date.now()}`;
+    const res = await fetch(fetchUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.recipient || data.projectId)) {
+        console.log(`[Cloud Storage] ✅ Loaded project JSON from URL:`, url);
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Cloud Storage] Could not fetch project from URL [${url}]:`, err);
+  }
+  return null;
 }

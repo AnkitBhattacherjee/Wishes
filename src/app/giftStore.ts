@@ -1,7 +1,21 @@
 import { projectId as supabaseProjectId, publicAnonKey } from "../../utils/supabase/info";
 import { uploadAudioToCloud } from "./utils/audioCloudUpload";
 import { uploadImageToCloud } from "./utils/imageCloudUpload";
-export { isSupabaseConfigured } from "./utils/supabaseStorage";
+import { getAudioBlob } from "./utils/audioStorage";
+import {
+  isSupabaseConfigured,
+  saveProjectJsonToSupabaseStorage,
+  loadProjectJsonFromSupabaseStorage,
+  saveProjectJsonToCatbox,
+  loadProjectJsonFromUrl,
+} from "./utils/supabaseStorage";
+export {
+  isSupabaseConfigured,
+  saveProjectJsonToSupabaseStorage,
+  loadProjectJsonFromSupabaseStorage,
+  saveProjectJsonToCatbox,
+  loadProjectJsonFromUrl,
+};
 
 export type ScrapbookPage = {
   id: string;
@@ -129,6 +143,7 @@ export type GiftProject = {
   customSongYoutubeId?: string | null;
   mailboxTheme?: MailboxTheme;
   mailboxItems?: MailboxBubbleItem[];
+  cloudUrl?: string | null;
   isSealed?: boolean;
   sealedAt?: number;
   updatedAt: number;
@@ -170,6 +185,7 @@ export const emptyProject = (): GiftProject => ({
   customSongName: null,
   mailboxTheme: "putulkhela",
   mailboxItems: DEFAULT_MAILBOX_ITEMS,
+  cloudUrl: null,
   updatedAt: Date.now(),
 });
 
@@ -217,33 +233,45 @@ export function encodeSharedProject(project: GiftProject): string {
     // Clean mailboxItems for receiver share token:
     // - Ephemeral blob: URLs NEVER work across devices/browsers, strip them
     // - Clean permanent HTTPS URLs (Supabase, Catbox, etc.) are small (~80 chars) and ALWAYS preserved!
-    // - Compact base64 micro-WebP (<70KB) are preserved so photos work even without cloud!
     if (safeProject.mailboxItems) {
       safeProject.mailboxItems = safeProject.mailboxItems.map((item) => {
         const cleaned = { ...item };
-        // Strip ephemeral local blob: and local idb: URLs (sender-only)
         if (cleaned.photoUrl && (cleaned.photoUrl.startsWith("blob:") || cleaned.photoUrl.startsWith("idb:"))) cleaned.photoUrl = "";
         if (cleaned.voiceUrl && (cleaned.voiceUrl.startsWith("blob:") || cleaned.voiceUrl.startsWith("idb:"))) cleaned.voiceUrl = "";
         if (cleaned.audioUrl && (cleaned.audioUrl.startsWith("blob:") || cleaned.audioUrl.startsWith("idb:"))) cleaned.audioUrl = "";
 
-        // Only strip oversized data: URLs if they exceed token safety threshold
-        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("data:") && cleaned.photoUrl.length > 120000) {
+        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("data:") && cleaned.photoUrl.length > 50000) {
           cleaned.photoUrl = "";
         }
-        if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("data:") && cleaned.voiceUrl.length > 250000) {
+        if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("data:") && cleaned.voiceUrl.length > 50000) {
           cleaned.voiceUrl = "";
         }
-        if (cleaned.audioUrl && cleaned.audioUrl.startsWith("data:") && cleaned.audioUrl.length > 250000) {
+        if (cleaned.audioUrl && cleaned.audioUrl.startsWith("data:") && cleaned.audioUrl.length > 50000) {
           cleaned.audioUrl = "";
         }
         return cleaned;
       });
     }
+
+    // Clean journalPages for receiver share token: preserve cloud URLs, omit oversized data URLs
+    if (safeProject.journalPages) {
+      safeProject.journalPages = safeProject.journalPages.map((page) => ({
+        ...page,
+        photos: (page.photos || []).map((p) => (p && p.startsWith("data:") && p.length > 50000 ? "" : p)),
+        data: Object.fromEntries(
+          Object.entries(page.data || {}).map(([k, v]) => [
+            k,
+            typeof v === "string" && v.startsWith("data:") && v.length > 50000 ? "" : v,
+          ])
+        ),
+      }));
+    }
+
     // Strip song blob:, sender-only idb:, or oversized data: URLs
     if (safeProject.customSongUrl && (safeProject.customSongUrl.startsWith("blob:") || safeProject.customSongUrl.startsWith("idb:"))) {
       safeProject.customSongUrl = null;
     }
-    if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("data:") && safeProject.customSongUrl.length > 250000) {
+    if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("data:") && safeProject.customSongUrl.length > 50000) {
       safeProject.customSongUrl = null;
     }
 
@@ -254,7 +282,8 @@ export function encodeSharedProject(project: GiftProject): string {
       binary += String.fromCharCode(bytes[i]);
     }
     const base64 = btoa(binary);
-    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const token = base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return token.length > 7000 ? project.projectId : token;
   } catch {
     return project.projectId;
   }
@@ -262,7 +291,10 @@ export function encodeSharedProject(project: GiftProject): string {
 
 function decodeSharedProject(value: string): GiftProject | null {
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    let base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    while (base64.length % 4 !== 0) {
+      base64 += "=";
+    }
     const binary = atob(base64);
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
     return normalize(JSON.parse(new TextDecoder().decode(bytes)));
@@ -273,21 +305,27 @@ function decodeSharedProject(value: string): GiftProject | null {
 
 export function loadGiftProject(): GiftProject {
   let shared: string | null = null;
+  let idParam: string | null = null;
   let editParam: string | null = null;
+  let cloudParam: string | null = null;
   let isReceiverView = false;
 
   if (typeof window !== "undefined") {
     const searchParams = new URLSearchParams(window.location.search);
     shared = searchParams.get("gift");
+    idParam = searchParams.get("id");
     editParam = searchParams.get("edit");
-    isReceiverView = searchParams.get("view") === "receiver";
+    cloudParam = searchParams.get("cloud");
+    isReceiverView = searchParams.get("view") === "receiver" || (Boolean(shared) && !editParam);
 
     if (window.location.hash.includes("?")) {
       const hashQuery = window.location.hash.substring(window.location.hash.indexOf("?"));
       const hashParams = new URLSearchParams(hashQuery);
       if (!shared) shared = hashParams.get("gift");
+      if (!idParam) idParam = hashParams.get("id");
       if (!editParam) editParam = hashParams.get("edit");
-      if (!isReceiverView) isReceiverView = hashParams.get("view") === "receiver";
+      if (!cloudParam) cloudParam = hashParams.get("cloud");
+      if (!isReceiverView) isReceiverView = hashParams.get("view") === "receiver" || (Boolean(shared) && !editParam);
     }
   }
 
@@ -298,49 +336,42 @@ export function loadGiftProject(): GiftProject {
     if (saved) localSaved = normalize(JSON.parse(saved));
   } catch {}
 
-  // If explicitly viewing as receiver, decode the shared token from the link
-  if (shared && isReceiverView) {
-    const looksLikeId = /^[0-9a-f-]{30,40}$/i.test(shared);
-    if (!looksLikeId) {
-      const decoded = decodeSharedProject(shared);
-      if (decoded) {
-        if (editParam) {
-          decoded.editToken = editParam;
-        }
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
-        } catch {}
-        return decoded;
-      }
-    }
-  }
+  const targetId = idParam || (shared && /^[0-9a-f-]{30,40}$/i.test(shared) ? shared : null);
 
-  // For sender / creator: localSaved is the primary source of truth!
-  // It holds all your newly uploaded songs, photos, and current edits across page refreshes.
-  if (localSaved) {
-    if (editParam && !localSaved.editToken) {
-      localSaved.editToken = editParam;
+  // If viewing local project that matches targetId (or sender testing their own link in the same browser)
+  if (localSaved && (!targetId || localSaved.projectId === targetId)) {
+    if (isReceiverView) {
+      return { ...localSaved, isSealed: true };
     }
     return localSaved;
   }
 
-  // If no local project exists yet, decode from shared link if available
-  if (shared) {
-    const looksLikeId = /^[0-9a-f-]{30,40}$/i.test(shared);
-    if (!looksLikeId) {
-      const decoded = decodeSharedProject(shared);
-      if (decoded) {
-        if (editParam) decoded.editToken = editParam;
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
-        } catch {}
-        return decoded;
-      }
+  // If a self-contained base64 token is present in the link, decode it immediately
+  if (shared && !/^[0-9a-f-]{30,40}$/i.test(shared)) {
+    const decoded = decodeSharedProject(shared);
+    if (decoded) {
+      if (editParam) decoded.editToken = editParam;
+      if (cloudParam) decoded.cloudUrl = cloudParam;
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
+      } catch {}
+      return decoded;
     }
-    return { ...emptyProject(), projectId: shared, editToken: editParam || "" };
   }
 
-  return emptyProject();
+  // If creator has a local saved project and no explicit other ID was requested
+  if (localSaved && !targetId) {
+    return localSaved;
+  }
+
+  // Return initial skeleton with targetId and cloudUrl so loadCloudGiftProject can hydrate
+  return {
+    ...emptyProject(),
+    projectId: targetId || (shared && /^[0-9a-f-]{30,40}$/i.test(shared) ? shared : crypto.randomUUID()),
+    editToken: editParam || "",
+    cloudUrl: cloudParam || null,
+    isSealed: isReceiverView,
+  };
 }
 
 export function saveGiftProject(project: GiftProject) {
@@ -415,9 +446,8 @@ export function unsealGiftProject(project: GiftProject): GiftProject {
 
 export function createReceiverShareLink(project: GiftProject): string {
   const sealed = { ...project, isSealed: true, sealedAt: project.sealedAt || Date.now() };
-  const token = encodeSharedProject(sealed);
   if (typeof window === "undefined") {
-    return `#/wish?gift=${token}&view=receiver`;
+    return `#/wish?gift=${project.projectId}&view=receiver`;
   }
   const origin = window.location.origin;
   let pathname = window.location.pathname || "";
@@ -425,7 +455,15 @@ export function createReceiverShareLink(project: GiftProject): string {
     pathname = pathname.substring(0, pathname.lastIndexOf("/"));
   }
   pathname = pathname.replace(/\/+$/, "");
-  return `${origin}${pathname}/#/wish?gift=${token}&view=receiver`;
+
+  const token = encodeSharedProject(sealed);
+  const isCompact = token && token.length > 20 && token.length <= 7000 && !/^[0-9a-f-]{30,40}$/i.test(token);
+  const cloudPart = project.cloudUrl ? `&cloud=${encodeURIComponent(project.cloudUrl)}` : "";
+
+  if (isCompact) {
+    return `${origin}${pathname}/#/wish?gift=${token}${cloudPart}&id=${project.projectId}&view=receiver`;
+  }
+  return `${origin}${pathname}/#/wish?gift=${project.projectId}${cloudPart}&id=${project.projectId}&view=receiver`;
 }
 
 export function createSenderEditLink(project: GiftProject): string {
@@ -481,103 +519,331 @@ const headers = {
   Authorization: `Bearer ${publicAnonKey}`,
 };
 
-export async function persistGiftProject(project: GiftProject) {
-  if (!project.editToken) return project;
-  if (!isSupabaseConfigured()) {
-    // Project is safely stored in browser localStorage and self-contained in receiver link
-    reportCloudStatus("saved");
-    return project;
-  }
-  if (Date.now() < cloudUnavailableUntil) {
-    reportCloudStatus("offline");
-    throw new Error("Cloud sync is temporarily unavailable");
-  }
-  reportCloudStatus("syncing");
-  try {
-    const response = await fetch(`${API_URL}/projects/${project.projectId}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({ editToken: project.editToken, project }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || body.message || "Save failed");
-    }
-    cloudUnavailableUntil = 0;
-    reportCloudStatus("saved");
-    return project;
-  } catch (error) {
-    cloudUnavailableUntil = Date.now() + 30_000;
-    reportCloudStatus("offline");
-    throw error;
-  }
-}
+/**
+ * Ensures all media (photos, audio files, voice recordings, and custom backgrounds)
+ * in the project are hosted on public cloud URLs (e.g. Catbox/Supabase) rather than
+ * local IndexedDB markers or massive base64 data URLs.
+ * This ensures receivers on any device or fresh session can load all media flawlessly.
+ */
+export async function ensureMediaCloudUrls(project: GiftProject): Promise<GiftProject> {
+  const updated = { ...project };
+  let hasChanges = false;
 
-export async function loadCloudGiftProject(id: string): Promise<GiftProject> {
-  if (!isSupabaseConfigured()) {
-    return loadGiftProject();
-  }
-  reportCloudStatus("syncing");
-  try {
-    const response = await fetch(`${API_URL}/projects/${id}`, { headers });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || body.message || "Gift not found");
+  // 1. Ensure custom background is a cloud URL
+  if (updated.customBgUrl && (updated.customBgUrl.startsWith("data:") || updated.customBgUrl.startsWith("blob:"))) {
+    try {
+      const res = await fetch(updated.customBgUrl);
+      const blob = await res.blob();
+      const cloudUrl = await uploadImageToCloud(blob);
+      if (cloudUrl && cloudUrl.startsWith("http")) {
+        updated.customBgUrl = cloudUrl;
+        hasChanges = true;
+      }
+    } catch (e) {
+      console.warn("[ensureMediaCloudUrls] Failed to upload custom background to cloud:", e);
     }
-    const { project } = await response.json();
-    const local = loadGiftProject();
+  }
 
-    let urlEditToken = "";
-    if (typeof window !== "undefined") {
-      const searchParams = new URLSearchParams(window.location.search);
-      urlEditToken = searchParams.get("edit") || "";
-      if (!urlEditToken && window.location.hash.includes("?")) {
-        const hashQuery = window.location.hash.substring(window.location.hash.indexOf("?"));
-        urlEditToken = new URLSearchParams(hashQuery).get("edit") || "";
+  // 2. Ensure custom song is a cloud URL
+  if (updated.customSongUrl && !updated.customSongYoutubeId) {
+    if (updated.customSongUrl.startsWith("idb:") || updated.customSongUrl.startsWith("blob:") || updated.customSongUrl.startsWith("data:")) {
+      try {
+        let blob: Blob | null = null;
+        if (updated.customSongUrl.startsWith("idb:")) {
+          const key = updated.customSongUrl.replace("idb:", "");
+          blob = await getAudioBlob(key);
+        } else {
+          const res = await fetch(updated.customSongUrl);
+          blob = await res.blob();
+        }
+        if (blob) {
+          const cloudUrl = await uploadAudioToCloud(blob, updated.customSongName || "custom-song.mp3");
+          if (cloudUrl && cloudUrl.startsWith("http")) {
+            updated.customSongUrl = cloudUrl;
+            hasChanges = true;
+          }
+        }
+      } catch (e) {
+        console.warn("[ensureMediaCloudUrls] Failed to upload custom song to cloud:", e);
       }
     }
-    const editToken = (local.projectId === id && local.editToken) ? local.editToken : (urlEditToken || local.editToken || "");
-
-    // Smart merge: if cloud has custom song URL, use it; otherwise retain local song
-    const mergedSongUrl = (project.customSongUrl && typeof project.customSongUrl === "string" && project.customSongUrl.startsWith("http"))
-      ? project.customSongUrl
-      : (local.projectId === id && local.customSongUrl ? local.customSongUrl : project.customSongUrl || null);
-
-    const mergedSongName = project.customSongName || (local.projectId === id ? local.customSongName : null);
-    const mergedSongYt = project.customSongYoutubeId !== undefined ? project.customSongYoutubeId : (local.projectId === id ? local.customSongYoutubeId : null);
-
-    // Merge mailbox items to keep any newly uploaded URLs
-    let mergedMailboxItems = project.mailboxItems;
-    if (Array.isArray(project.mailboxItems) && Array.isArray(local.mailboxItems) && local.projectId === id) {
-      mergedMailboxItems = project.mailboxItems.map((item: any) => {
-        const localMatch = local.mailboxItems?.find((li: any) => li.id === item.id || (item.puppetId && li.puppetId === item.puppetId));
-        if (!localMatch) return item;
-        return {
-          ...localMatch,
-          ...item,
-          audioUrl: item.audioUrl || localMatch.audioUrl,
-          voiceUrl: item.voiceUrl || localMatch.voiceUrl,
-          photoUrl: item.photoUrl || localMatch.photoUrl,
-        };
-      });
-    }
-
-    const next = normalize({
-      ...project,
-      projectId: id,
-      editToken,
-      customSongUrl: mergedSongUrl,
-      customSongName: mergedSongName,
-      customSongYoutubeId: mergedSongYt,
-      mailboxItems: mergedMailboxItems || project.mailboxItems,
-    });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    reportCloudStatus("saved");
-    return next;
-  } catch (error) {
-    reportCloudStatus("offline");
-    throw error;
   }
+
+  // 3. Ensure scrapbook photos are cloud URLs
+  if (Array.isArray(updated.journalPages)) {
+    const nextPages = await Promise.all(
+      updated.journalPages.map(async (page) => {
+        const nextData = { ...(page.data || {}) };
+        let pageChanged = false;
+
+        for (const [key, val] of Object.entries(nextData)) {
+          if (typeof val === "string" && (val.startsWith("data:image") || val.startsWith("blob:"))) {
+            try {
+              const res = await fetch(val);
+              const blob = await res.blob();
+              const cloudUrl = await uploadImageToCloud(blob);
+              if (cloudUrl && cloudUrl.startsWith("http")) {
+                nextData[key] = cloudUrl;
+                pageChanged = true;
+                hasChanges = true;
+              }
+            } catch (e) {
+              console.warn(`[ensureMediaCloudUrls] Failed to upload page photo [${key}]:`, e);
+            }
+          }
+        }
+
+        const nextPhotos = await Promise.all(
+          (page.photos || []).map(async (photo) => {
+            if (typeof photo === "string" && (photo.startsWith("data:image") || photo.startsWith("blob:"))) {
+              try {
+                const res = await fetch(photo);
+                const blob = await res.blob();
+                const cloudUrl = await uploadImageToCloud(blob);
+                if (cloudUrl && cloudUrl.startsWith("http")) {
+                  pageChanged = true;
+                  hasChanges = true;
+                  return cloudUrl;
+                }
+              } catch (e) {
+                console.warn("[ensureMediaCloudUrls] Failed to upload page photo array item:", e);
+              }
+            }
+            return photo;
+          })
+        );
+
+        if (pageChanged) {
+          return { ...page, data: nextData, photos: nextPhotos };
+        }
+        return page;
+      })
+    );
+    if (hasChanges) {
+      updated.journalPages = nextPages;
+    }
+  }
+
+  // 4. Ensure mailbox items (voice, song, photo) are cloud URLs
+  if (Array.isArray(updated.mailboxItems)) {
+    const nextMailbox = await Promise.all(
+      updated.mailboxItems.map(async (item) => {
+        const nextItem = { ...item };
+        let itemChanged = false;
+
+        // Voice URL
+        if (nextItem.voiceUrl && (nextItem.voiceUrl.startsWith("idb:") || nextItem.voiceUrl.startsWith("blob:") || nextItem.voiceUrl.startsWith("data:"))) {
+          try {
+            let blob: Blob | null = null;
+            if (nextItem.voiceUrl.startsWith("idb:")) {
+              const key = nextItem.voiceUrl.replace("idb:", "");
+              blob = await getAudioBlob(key);
+            } else {
+              const res = await fetch(nextItem.voiceUrl);
+              blob = await res.blob();
+            }
+            if (blob) {
+              const cloudUrl = await uploadAudioToCloud(blob, `voice_${item.id}.mp3`);
+              if (cloudUrl && cloudUrl.startsWith("http")) {
+                nextItem.voiceUrl = cloudUrl;
+                itemChanged = true;
+                hasChanges = true;
+              }
+            }
+          } catch (e) {
+            console.warn(`[ensureMediaCloudUrls] Failed to upload mailbox voice [${item.id}]:`, e);
+          }
+        }
+
+        // Audio URL
+        if (nextItem.audioUrl && (nextItem.audioUrl.startsWith("idb:") || nextItem.audioUrl.startsWith("blob:") || nextItem.audioUrl.startsWith("data:"))) {
+          try {
+            let blob: Blob | null = null;
+            if (nextItem.audioUrl.startsWith("idb:")) {
+              const key = nextItem.audioUrl.replace("idb:", "");
+              blob = await getAudioBlob(key);
+            } else {
+              const res = await fetch(nextItem.audioUrl);
+              blob = await res.blob();
+            }
+            if (blob) {
+              const cloudUrl = await uploadAudioToCloud(blob, `audio_${item.id}.mp3`);
+              if (cloudUrl && cloudUrl.startsWith("http")) {
+                nextItem.audioUrl = cloudUrl;
+                itemChanged = true;
+                hasChanges = true;
+              }
+            }
+          } catch (e) {
+            console.warn(`[ensureMediaCloudUrls] Failed to upload mailbox audio [${item.id}]:`, e);
+          }
+        }
+
+        // Photo URL
+        if (nextItem.photoUrl && (nextItem.photoUrl.startsWith("blob:") || nextItem.photoUrl.startsWith("data:image"))) {
+          try {
+            const res = await fetch(nextItem.photoUrl);
+            const blob = await res.blob();
+            const cloudUrl = await uploadImageToCloud(blob);
+            if (cloudUrl && cloudUrl.startsWith("http")) {
+              nextItem.photoUrl = cloudUrl;
+              itemChanged = true;
+              hasChanges = true;
+            }
+          } catch (e) {
+            console.warn(`[ensureMediaCloudUrls] Failed to upload mailbox photo [${item.id}]:`, e);
+          }
+        }
+
+        return itemChanged ? nextItem : item;
+      })
+    );
+    if (hasChanges) {
+      updated.mailboxItems = nextMailbox;
+    }
+  }
+
+  if (hasChanges) {
+    saveGiftProject(updated);
+  }
+  return updated;
+}
+
+export async function persistGiftProject(project: GiftProject): Promise<GiftProject> {
+  reportCloudStatus("syncing");
+
+  // 1. Ensure all media are converted to public cloud URLs
+  let next = { ...project };
+  try {
+    next = await ensureMediaCloudUrls(project);
+  } catch (err) {
+    console.warn("[persistGiftProject] ensureMediaCloudUrls partial error:", err);
+  }
+  next.updatedAt = Date.now();
+
+  // 2. Upload full project JSON to Catbox (free, instant, permanent, CORS *)
+  let catboxUrl: string | null = null;
+  try {
+    catboxUrl = await saveProjectJsonToCatbox(next.projectId, next);
+    if (catboxUrl) {
+      next.cloudUrl = catboxUrl;
+    }
+  } catch (catboxErr) {
+    console.warn("[persistGiftProject] Catbox JSON save failed:", catboxErr);
+  }
+
+  // 3. Save to Supabase Storage if configured
+  if (isSupabaseConfigured()) {
+    try {
+      await saveProjectJsonToSupabaseStorage(next.projectId, next);
+    } catch (supabaseErr) {
+      console.warn("[persistGiftProject] Supabase Storage save failed:", supabaseErr);
+    }
+  }
+
+  saveGiftProject(next);
+  reportCloudStatus("saved");
+  return next;
+}
+
+export async function loadCloudGiftProject(id: string, cloudUrl?: string): Promise<GiftProject> {
+  if (!id && !cloudUrl) return loadGiftProject();
+  reportCloudStatus("syncing");
+
+  let projectData: any = null;
+
+  // 1. If explicit cloudUrl is provided, fetch it directly!
+  if (cloudUrl && cloudUrl.startsWith("http")) {
+    try {
+      projectData = await loadProjectJsonFromUrl(cloudUrl);
+    } catch (e) {
+      console.warn("[loadCloudGiftProject] Failed to fetch project from cloudUrl:", e);
+    }
+  }
+
+  // 2. Primary: Load project JSON directly from Supabase Storage
+  if (!projectData && isSupabaseConfigured() && id) {
+    try {
+      projectData = await loadProjectJsonFromSupabaseStorage(id);
+    } catch (e) {
+      console.warn("[loadCloudGiftProject] Supabase Storage fetch failed:", e);
+    }
+  }
+
+  // 3. Fallback: Edge Function endpoint if available
+  if (!projectData && isSupabaseConfigured() && id) {
+    try {
+      const response = await fetch(`${API_URL}/projects/${id}`, { headers });
+      if (response.ok) {
+        const body = await response.json();
+        projectData = body?.project;
+      }
+    } catch {}
+  }
+
+  // 4. Fallback: Check local storage
+  const local = loadGiftProject();
+  if (!projectData) {
+    if (local && (local.projectId === id || !id)) {
+      reportCloudStatus("saved");
+      return local;
+    }
+    reportCloudStatus("offline");
+    return local || emptyProject();
+  }
+
+  let urlEditToken = "";
+  if (typeof window !== "undefined") {
+    const searchParams = new URLSearchParams(window.location.search);
+    urlEditToken = searchParams.get("edit") || "";
+    if (!urlEditToken && window.location.hash.includes("?")) {
+      const hashQuery = window.location.hash.substring(window.location.hash.indexOf("?"));
+      urlEditToken = new URLSearchParams(hashQuery).get("edit") || "";
+    }
+  }
+  const editToken = (local.projectId === id && local.editToken) ? local.editToken : (urlEditToken || local.editToken || "");
+
+  // Smart merge: if cloud has custom song URL, use it; otherwise retain local song
+  const mergedSongUrl = (projectData.customSongUrl && typeof projectData.customSongUrl === "string" && projectData.customSongUrl.startsWith("http"))
+    ? projectData.customSongUrl
+    : (local.projectId === id && local.customSongUrl ? local.customSongUrl : projectData.customSongUrl || null);
+
+  const mergedSongName = projectData.customSongName || (local.projectId === id ? local.customSongName : null);
+  const mergedSongYt = projectData.customSongYoutubeId !== undefined ? projectData.customSongYoutubeId : (local.projectId === id ? local.customSongYoutubeId : null);
+
+  // Merge mailbox items to keep any newly uploaded URLs
+  let mergedMailboxItems = projectData.mailboxItems;
+  if (Array.isArray(projectData.mailboxItems) && Array.isArray(local.mailboxItems) && local.projectId === id) {
+    mergedMailboxItems = projectData.mailboxItems.map((item: any) => {
+      const localMatch = local.mailboxItems?.find((li: any) => li.id === item.id || (item.puppetId && li.puppetId === item.puppetId));
+      if (!localMatch) return item;
+      return {
+        ...localMatch,
+        ...item,
+        audioUrl: item.audioUrl || localMatch.audioUrl,
+        voiceUrl: item.voiceUrl || localMatch.voiceUrl,
+        photoUrl: item.photoUrl || localMatch.photoUrl,
+      };
+    });
+  }
+
+  const next = normalize({
+    ...projectData,
+    projectId: id,
+    editToken,
+    customSongUrl: mergedSongUrl,
+    customSongName: mergedSongName,
+    customSongYoutubeId: mergedSongYt,
+    mailboxItems: mergedMailboxItems || projectData.mailboxItems,
+    cloudUrl: cloudUrl || projectData.cloudUrl || local.cloudUrl || null,
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {}
+
+  reportCloudStatus("saved");
+  return next;
 }
 
 export async function uploadGiftPhoto(file: File): Promise<string> {
@@ -585,86 +851,14 @@ export async function uploadGiftPhoto(file: File): Promise<string> {
 }
 
 export async function uploadGiftFile(file: File | Blob, customMime?: string): Promise<string> {
-  const project = loadGiftProject();
-  let dataUrl: string;
-
-  const isImage =
-    (file instanceof File && file.type.startsWith("image/")) ||
-    (customMime && customMime.startsWith("image/"));
-
-  if (isImage && file instanceof File) {
-    dataUrl = await imageFileToDataUrl(file);
-  } else {
-    dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error);
-      reader.onload = () => resolve(String(reader.result));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // 1. Primary path: Official Supabase Edge Function (/files endpoint)
-  // This is the SAME server workflow used by Scrapbook, operating with service role permissions!
-  if (isSupabaseConfigured() && project.projectId) {
-    try {
-      // Ensure the project record exists in Supabase KV store first so editToken authorization passes
-      if (project.editToken) {
-        await persistGiftProject(project).catch(() => {});
-      }
-
-      const response = await fetch(`${API_URL}/projects/${project.projectId}/files`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ editToken: project.editToken, dataUrl }),
-      });
-
-      if (response.ok) {
-        const body = await response.json();
-        if (body?.url && body.url.startsWith("http")) {
-          console.log("[uploadGiftFile] ✅ Uploaded to Supabase Storage via server:", body.url);
-          return body.url;
-        }
-      } else {
-        console.warn("[uploadGiftFile] Supabase backend /files endpoint returned status:", response.status);
-      }
-    } catch (edgeErr) {
-      console.warn("[uploadGiftFile] Edge Function file upload failed, trying direct Supabase Storage:", edgeErr);
-    }
-  }
-
-  // 2. Direct Supabase Storage fallback using the "wish-photos" bucket
-  if (isSupabaseConfigured()) {
-    try {
-      const directUrl = await uploadToSupabaseStorage(file, "wish-photos");
-      if (directUrl && directUrl.startsWith("http")) {
-        console.log("[uploadGiftFile] ✅ Uploaded to Supabase Storage directly:", directUrl);
-        return directUrl;
-      }
-    } catch (directErr) {
-      console.warn("[uploadGiftFile] Direct Supabase Storage failed:", directErr);
-    }
-  }
-
-  // 3. Fallback public cloud providers
   const isAudio =
     (file instanceof File && file.type.startsWith("audio/")) ||
-    (customMime && customMime.startsWith("audio/"));
+    (customMime && customMime.startsWith("audio/")) ||
+    (file.type && file.type.startsWith("audio/"));
 
   if (isAudio) {
-    try {
-      const cloudUrl = await uploadAudioToCloud(file);
-      if (cloudUrl && cloudUrl.startsWith("http")) return cloudUrl;
-    } catch (err) {
-      console.warn("[uploadGiftFile] Audio cloud fallback failed:", err);
-    }
-  } else if (isImage) {
-    try {
-      const cloudUrl = await uploadImageToCloud(file);
-      if (cloudUrl && cloudUrl.startsWith("http")) return cloudUrl;
-    } catch (err) {
-      console.warn("[uploadGiftFile] Image cloud fallback failed:", err);
-    }
+    return uploadAudioToCloud(file);
+  } else {
+    return uploadImageToCloud(file);
   }
-
-  return dataUrl;
 }

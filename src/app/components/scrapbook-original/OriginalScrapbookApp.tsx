@@ -57,12 +57,14 @@ export default function OriginalScrapbookApp({
   pages,
   onPagesChange,
   onSave,
+  isReceiver,
 }: {
   visible: boolean;
   onExit: () => void;
   pages: ScrapbookPage[];
   onPagesChange: (pages: ScrapbookPage[]) => void;
   onSave: () => Promise<boolean>;
+  isReceiver?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
@@ -182,7 +184,7 @@ export default function OriginalScrapbookApp({
   const renderSpread = () => {
     const page = pages[currentPage];
     if (!page) return null;
-    const props = { data: page.data || {}, onUpdate: updateData, isViewerMode: false };
+    const props = { data: page.data || {}, onUpdate: updateData, isViewerMode: Boolean(isReceiver) };
     if (page.style === 2) return <Spread2 {...props} />;
     if (page.style === 3) return <Spread3 {...props} />;
     return <Spread1 {...props} />;
@@ -264,17 +266,17 @@ export default function OriginalScrapbookApp({
             <StickerProvider
               data={pages[currentPage]?.data || {}}
               onUpdate={updateData}
-              isViewerMode={false}
+              isViewerMode={Boolean(isReceiver)}
             >
             <div className="fixed left-0 right-0 top-4 z-50 flex justify-between px-8">
-              <div className="flex gap-4">
+              <div className="flex items-center gap-4">
                 <button
                   onClick={handleCloseDiary}
                   className="rounded-full bg-white/80 px-4 py-2 font-semibold text-pink-600 shadow backdrop-blur transition hover:bg-white cursor-pointer"
                 >
                   Close Diary
                 </button>
-                {pages.length > 1 && (
+                {!isReceiver && pages.length > 1 && (
                   <button
                     onClick={deletePage}
                     className="flex items-center gap-2 rounded-full bg-red-100/80 px-4 py-2 font-semibold text-red-600 shadow backdrop-blur transition hover:bg-red-100"
@@ -282,29 +284,36 @@ export default function OriginalScrapbookApp({
                     <Trash2 size={18} /> Delete Page
                   </button>
                 )}
+                {isReceiver && (
+                  <span className="rounded-full bg-white/70 px-4 py-1.5 text-xs font-semibold text-pink-700 shadow-sm backdrop-blur">
+                    📖 Memory Scrapbook • Page {currentPage + 1} of {pages.length}
+                  </span>
+                )}
               </div>
-              <div className="flex gap-4">
-                <select
-                  className="cursor-pointer rounded-full bg-white/80 px-4 py-2 font-semibold text-gray-700 shadow outline-none backdrop-blur transition hover:bg-white"
-                  onChange={(event) =>
-                    document.documentElement.style.setProperty("--font-family", event.target.value)
-                  }
-                >
-                  <option value="'Judson', serif">Font: Judson</option>
-                  <option value="'Caveat', serif">Font: Caveat</option>
-                  <option value="'Dancing Script', cursive">Font: Dancing Script</option>
-                  <option value="'Pacifico', cursive">Font: Pacifico</option>
-                  <option value="'Quicksand', cursive">Font: Quicksand</option>
-                </select>
-                <button
-                  onClick={save}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 rounded-full bg-white/85 px-5 py-2 font-bold text-pink-600 shadow transition hover:bg-white disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? <Loader2 size={18} className="animate-spin" /> : dirty ? <Save size={18} /> : <Check size={18} />}
-                  {isSaving ? "Saving..." : dirty ? "Save" : "Saved ✓"}
-                </button>
-              </div>
+              {!isReceiver && (
+                <div className="flex gap-4">
+                  <select
+                    className="cursor-pointer rounded-full bg-white/80 px-4 py-2 font-semibold text-gray-700 shadow outline-none backdrop-blur transition hover:bg-white"
+                    onChange={(event) =>
+                      document.documentElement.style.setProperty("--font-family", event.target.value)
+                    }
+                  >
+                    <option value="'Judson', serif">Font: Judson</option>
+                    <option value="'Caveat', serif">Font: Caveat</option>
+                    <option value="'Dancing Script', cursive">Font: Dancing Script</option>
+                    <option value="'Pacifico', cursive">Font: Pacifico</option>
+                    <option value="'Quicksand', cursive">Font: Quicksand</option>
+                  </select>
+                  <button
+                    onClick={save}
+                    disabled={isSaving}
+                    className="flex items-center gap-2 rounded-full bg-white/85 px-5 py-2 font-bold text-pink-600 shadow transition hover:bg-white disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : dirty ? <Save size={18} /> : <Check size={18} />}
+                    {isSaving ? "Saving..." : dirty ? "Save" : "Saved ✓"}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="relative flex h-[80vh] w-full max-w-[1400px] items-center justify-center">
@@ -355,7 +364,7 @@ export default function OriginalScrapbookApp({
                   />
                 ))}
               </div>
-              {pages.length < MAX_PAGES && (
+              {!isReceiver && pages.length < MAX_PAGES && (
                 <div className="relative border-l-2 border-pink-100 pl-4">
                   <button
                     onClick={() => setIsAddingPage((value) => !value)}
@@ -379,11 +388,11 @@ export default function OriginalScrapbookApp({
                   </AnimatePresence>
                 </div>
               )}
-              <AddStickerButton />
+              {!isReceiver && <AddStickerButton />}
               <button
                 onClick={saveToDevice}
                 disabled={isSavingImage}
-                className="flex items-center gap-1 border-l-2 border-pink-100 pl-4 font-semibold text-pink-500"
+                className={`flex items-center gap-1 font-semibold text-pink-500 ${!isReceiver ? "border-l-2 border-pink-100 pl-4" : ""}`}
               >
                 {isSavingImage ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
                 Save to device

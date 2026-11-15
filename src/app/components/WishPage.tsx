@@ -7,7 +7,7 @@ import { useDynamicLetterFont, type LetterFontStyle } from "./useDynamicLetterFo
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Check, Share2, Sparkles, Heart, Eye, Edit3, X, Feather, Image as ImageIcon, ExternalLink, RotateCcw, ChevronDown, Trash2 } from "lucide-react";
+import { Check, Share2, Sparkles, Heart, Eye, Edit3, X, Feather, Image as ImageIcon, ExternalLink, RotateCcw, ChevronDown, Trash2, Upload } from "lucide-react";
 import {
   createShareLink,
   loadCloudGiftProject,
@@ -19,6 +19,7 @@ import {
   type CloudStatus,
 } from "../giftStore";
 import { preloadProjectAudios } from "../utils/audioPreloader";
+import { uploadImageToCloud } from "../utils/imageCloudUpload";
 import svgPaths from "../../imports/svg-mflmjqo28j";
 import imgImage10 from "figma:asset/22caa5ad402836f5fe397bca16006c6983d5252d.png";
 import imgLetterPaper from "../../imports/letter_paper.png";
@@ -762,19 +763,33 @@ export default function WishPage() {
   }, []);
 
   useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const hashQuery =
+      typeof window !== "undefined" && window.location.hash.includes("?")
+        ? new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf("?")))
+        : null;
     const targetId =
-      giftParam ||
+      searchParams.get("id") ||
+      hashQuery?.get("id") ||
+      (giftParam && /^[0-9a-f-]{30,40}$/i.test(giftParam) ? giftParam : null) ||
       (project.projectId && /^[0-9a-f-]{30,40}$/i.test(project.projectId) ? project.projectId : null);
-    if (!targetId || !isSupabaseConfigured()) return;
+    const cloudParam = searchParams.get("cloud") || hashQuery?.get("cloud") || project.cloudUrl || undefined;
+
+    if (!targetId && !cloudParam) return;
     setCloudStatus("loading");
-    loadCloudGiftProject(targetId)
+    loadCloudGiftProject(targetId || project.projectId, cloudParam)
       .then((loaded) => {
-        setProject(loaded);
-        setCloudStatus("saved");
-        preloadProjectAudios(loaded);
+        if (loaded && (loaded.recipient || loaded.projectId)) {
+          setProject((prev) => ({
+            ...loaded,
+            isSealed: isReceiver ? true : (loaded.isSealed ?? prev.isSealed),
+          }));
+          setCloudStatus("saved");
+          preloadProjectAudios(loaded);
+        }
       })
       .catch(() => setCloudStatus("error"));
-  }, [giftParam, project.projectId]);
+  }, [giftParam, project.projectId, location.search, location.hash, isReceiver]);
 
   // Automatically start background retrieval/prefetching for all gift audio files
   // (Celebration room custom song, mailbox songs & voice memos) as soon as the sealed link is opened
@@ -816,7 +831,28 @@ export default function WishPage() {
   const [isBgDropdownOpen, setIsBgDropdownOpen] = useState(false);
   const [unsplashInput, setUnsplashInput] = useState("");
   const [unsplashError, setUnsplashError] = useState<string | null>(null);
+  const [isUploadingBg, setIsUploadingBg] = useState(false);
   const bgDropdownRef = useRef<HTMLDivElement>(null);
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBgFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setIsUploadingBg(true);
+      setUnsplashError(null);
+      const cloudUrl = await uploadImageToCloud(file);
+      if (cloudUrl && cloudUrl.startsWith("http")) {
+        updateProject({ customBgUrl: cloudUrl });
+      }
+    } catch (err) {
+      console.error("Background photo upload failed:", err);
+      setUnsplashError("Could not upload background image. Please check your connection.");
+    } finally {
+      setIsUploadingBg(false);
+      if (bgFileInputRef.current) bgFileInputRef.current.value = "";
+    }
+  };
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -901,7 +937,17 @@ export default function WishPage() {
 
   const handleStickerClick = (stickerId: string) => {
     if (stickerId === "birthday-cake") {
-      const search = giftParam ? `?gift=${giftParam}&view=receiver` : location.search;
+      let search = location.search;
+      if (isReceiver && (!search || !search.includes("view=receiver"))) {
+        const params = new URLSearchParams(search);
+        if (giftParam) params.set("gift", giftParam);
+        if (project.projectId) params.set("id", project.projectId);
+        if (project.cloudUrl) params.set("cloud", project.cloudUrl);
+        params.set("view", "receiver");
+        search = `?${params.toString()}`;
+      } else if (!search && giftParam) {
+        search = `?gift=${giftParam}&id=${project.projectId}&view=receiver`;
+      }
       navigate(`/room${search}`, {
         state: {
           name,
@@ -1026,9 +1072,27 @@ export default function WishPage() {
 
                 {/* Unsplash Input Section */}
                 <div className="mt-3.5">
-                  <label className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-1.5">
-                    Paste Unsplash / Image Link
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44]">
+                      Background Image
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => bgFileInputRef.current?.click()}
+                      disabled={isUploadingBg}
+                      className="inline-flex items-center gap-1 text-[10.5px] font-['Poppins',sans-serif] font-semibold text-pink-600 hover:text-pink-700 cursor-pointer disabled:opacity-50"
+                    >
+                      <Upload size={11} />
+                      <span>{isUploadingBg ? "Uploading... ⏳" : "Upload File"}</span>
+                    </button>
+                    <input
+                      ref={bgFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBgFileUpload}
+                      className="hidden"
+                    />
+                  </div>
                   <form onSubmit={handleApplyCustomUrl} className="flex gap-1.5">
                     <div className="relative flex-1">
                       <input
@@ -1481,6 +1545,7 @@ export default function WishPage() {
         pages={project.journalPages}
         onPagesChange={(journalPages) => updateProject({ journalPages })}
         onSave={saveChanges}
+        isReceiver={isReceiver}
       />
 
       {/* Mailbox Modal (Putul Khela Stage & Dream Bubble Realm) */}

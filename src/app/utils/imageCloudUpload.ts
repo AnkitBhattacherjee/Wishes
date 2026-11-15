@@ -75,7 +75,33 @@ export async function compressImageToBlob(
   });
 }
 
-// Provider 1: tmpfiles.org (Fast upload, direct /dl/ link)
+// Provider 1: Catbox Permanent (Free, direct, fast HTTPS image hosting)
+async function uploadToCatbox(blob: Blob, fileName: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("reqtype", "fileupload");
+  formData.append("userhash", "");
+  formData.append("fileToUpload", blob, fileName);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`catbox status ${res.status}`);
+    const text = (await res.text()).trim();
+    if (text.startsWith("http")) {
+      return text;
+    }
+    throw new Error("Invalid response from catbox");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Provider 2: tmpfiles.org (Fast upload, direct /dl/ link)
 async function uploadToTmpFiles(blob: Blob, fileName: string): Promise<string> {
   const formData = new FormData();
   formData.append("file", blob, fileName);
@@ -155,7 +181,9 @@ async function uploadToFilebin(blob: Blob, fileName: string): Promise<string> {
 export async function uploadImageToCloud(file: File | Blob): Promise<string> {
   const { blob, fileName } = await compressImageToBlob(file, 1200, 0.82);
 
-  const providers: { name: string; fn: () => Promise<string> }[] = [];
+  const providers: { name: string; fn: () => Promise<string> }[] = [
+    { name: "catbox", fn: () => uploadToCatbox(blob, fileName) },
+  ];
 
   if (isSupabaseConfigured()) {
     providers.push({

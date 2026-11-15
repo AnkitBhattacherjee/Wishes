@@ -8,6 +8,7 @@ export default function JournalOverlay({
   pages,
   onPagesChange,
   onSave,
+  isReceiver,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -15,6 +16,7 @@ export default function JournalOverlay({
   pages: ScrapbookPage[];
   onPagesChange: (pages: ScrapbookPage[]) => void;
   onSave: () => Promise<boolean>;
+  isReceiver?: boolean;
 }) {
   return (
     <AnimatePresence>
@@ -32,6 +34,7 @@ export default function JournalOverlay({
             pages={pages}
             onPagesChange={onPagesChange}
             onSave={onSave}
+            isReceiver={isReceiver}
           />
         </motion.div>
       )}

@@ -21,6 +21,7 @@ import {
   createSenderEditLink,
   sealGiftProject,
   unsealGiftProject,
+  persistGiftProject,
 } from "../giftStore";
 
 interface ShareModalProps {
@@ -37,6 +38,7 @@ export function ShareModal({
   onProjectUpdate,
 }: ShareModalProps) {
   const [copiedType, setCopiedType] = useState<"receiver" | "sender" | null>(null);
+  const [isSealing, setIsSealing] = useState(false);
 
   if (!isOpen) return null;
 
@@ -44,11 +46,23 @@ export function ShareModal({
 
   // 1. Copy Receiver Link & Seal Gift
   const handleCopyReceiverLink = async () => {
+    setIsSealing(true);
     // Automatically seal if not yet sealed
     const nextProject = isSealed ? project : sealGiftProject(project);
     if (!isSealed) onProjectUpdate(nextProject);
 
-    const receiverUrl = createReceiverShareLink(nextProject);
+    let syncedProject = nextProject;
+    // Ensure full project and all media are saved to public cloud storage before copying the link
+    try {
+      syncedProject = await persistGiftProject(nextProject);
+      onProjectUpdate(syncedProject);
+    } catch (e) {
+      console.warn("Could not sync sealed project to cloud before sharing:", e);
+    } finally {
+      setIsSealing(false);
+    }
+
+    const receiverUrl = createReceiverShareLink(syncedProject);
 
     try {
       if (navigator.share) {
@@ -211,9 +225,17 @@ export function ShareModal({
               <div className="flex items-center gap-2 mt-1">
                 <button
                   onClick={handleCopyReceiverLink}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 via-rose-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-['Poppins',sans-serif] font-semibold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer"
+                  disabled={isSealing}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 via-rose-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-['Poppins',sans-serif] font-semibold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer ${
+                    isSealing ? "opacity-75 cursor-wait" : ""
+                  }`}
                 >
-                  {copiedType === "receiver" ? (
+                  {isSealing ? (
+                    <>
+                      <Sparkles size={14} className="animate-spin" />
+                      <span>Sealing & Syncing to Cloud... ⏳</span>
+                    </>
+                  ) : copiedType === "receiver" ? (
                     <>
                       <Check size={14} className="text-white" />
                       <span>Receiver Link Copied! 🎉</span>

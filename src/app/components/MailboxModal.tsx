@@ -185,6 +185,36 @@ export function MailboxModal({
     return isVideoMedia(activeItem?.audioUrl) ? videoPlayerRef.current : audioPlayerRef.current;
   };
 
+  // Auto-play voice note on enter when opening Moonbeam Boy / voice card
+  useEffect(() => {
+    if (!activeItem) return;
+    const isVoice = activeItem.type === "voice" || activeItem.puppetId === "moonboy";
+    const voiceSrc = activeItem.voiceUrl || activeItem.audioUrl;
+    if (isVoice && voiceSrc) {
+      const timer = setTimeout(() => {
+        if (audioPlayerRef.current) {
+          audioPlayerRef.current.currentTime = 0;
+          const playPromise = audioPlayerRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => setIsPlayingAudio(true))
+              .catch((err) => {
+                console.warn("[Voice AutoPlay deferred]:", err);
+              });
+          }
+        }
+      }, 180);
+      return () => clearTimeout(timer);
+    }
+  }, [activeItem?.id, activeItem?.type, activeItem?.voiceUrl, activeItem?.audioUrl]);
+
+  // Pause audio when activeItem is closed
+  useEffect(() => {
+    if (!activeItem && audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+    }
+  }, [activeItem]);
+
   // Creator Modal State
   const [isAdding, setIsAdding] = useState(false);
   const [addTab, setAddTab] = useState<MailboxBubbleType>("song");
@@ -1959,36 +1989,28 @@ export function MailboxModal({
                         )}
 
                         {/* 3. VOICE NOTE (চাঁদের পুতুল / Moonbeam Boy) */}
-                        {activeItem.type === "voice" && (
-                          <div className="flex flex-col items-center justify-center gap-2.5 w-full">
-                            {/* Glowing Puppet Icon Badge */}
-                            <div className="w-13 h-13 rounded-full bg-gradient-to-tr from-amber-400 via-amber-600 to-amber-800 text-amber-100 flex items-center justify-center shadow-[0_4px_25px_rgba(245,158,11,0.5)] border-2 border-amber-300/70 mb-0.5">
-                              <Mic size={24} className={isRecordingPuppet ? "text-rose-300 animate-ping" : "animate-pulse"} />
-                            </div>
-
-                            <div className="flex items-center gap-1.5 text-[11px] font-serif text-amber-200">
-                              <span className="font-bold tracking-wider uppercase">
-                                Personal Voice Whisper
-                              </span>
-                              {activeItem.voiceDuration ? (
-                                <span className="text-amber-400 font-semibold">• ~{activeItem.voiceDuration}s</span>
-                              ) : null}
-                              <span>•</span>
-                              <span className="text-emerald-400 font-medium">Plays in site with 0 redirect ✨</span>
-                            </div>
-
+                        {(activeItem.type === "voice" || activeItem.puppetId === "moonboy") && (
+                          <div className="flex flex-col items-center justify-center gap-2 w-full my-auto">
                             {/* Voice Player & Controls */}
                             {Boolean(activeItem.voiceUrl || activeItem.audioUrl) ? (
-                              <div className="flex flex-col items-center gap-2 w-full mt-1">
+                              <div className="flex flex-col items-center gap-2 w-full">
                                 <audio
                                   ref={audioPlayerRef}
                                   src={activeItem.voiceUrl || activeItem.audioUrl}
+                                  autoPlay
+                                  playsInline
                                   onPlay={() => setIsPlayingAudio(true)}
                                   onPause={() => setIsPlayingAudio(false)}
                                   onEnded={() => setIsPlayingAudio(false)}
+                                  onCanPlay={(e) => {
+                                    const audio = e.currentTarget;
+                                    if (audio.paused) {
+                                      audio.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+                                    }
+                                  }}
                                 />
 
-                                {/* Primary Play / Pause Button */}
+                                {/* Subtle & Elegant Sound Wave Indicator (Auto-plays on enter) */}
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1997,36 +2019,51 @@ export function MailboxModal({
                                       audioPlayerRef.current.pause();
                                       setIsPlayingAudio(false);
                                     } else {
-                                      audioPlayerRef.current.play();
+                                      audioPlayerRef.current.play().catch(() => {});
                                       setIsPlayingAudio(true);
                                     }
                                   }}
-                                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-amber-950 font-serif font-bold text-xs sm:text-sm shadow-[0_4px_20px_rgba(245,158,11,0.4)] border border-amber-300/80 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                                  className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-xs font-serif cursor-pointer transition-all hover:scale-105 active:scale-95 shadow-sm"
+                                  title={isPlayingAudio ? "Click to pause voice whisper" : "Click to play voice whisper"}
                                 >
                                   {isPlayingAudio ? (
-                                    <Pause size={15} fill="currentColor" />
+                                    <>
+                                      <span className="flex items-center gap-0.5 h-3 text-amber-300">
+                                        <span className="w-0.5 h-2 bg-amber-300 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                        <span className="w-0.5 h-3.5 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                        <span className="w-0.5 h-2 bg-amber-300 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                                        <span className="w-0.5 h-3 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: "450ms" }} />
+                                      </span>
+                                      <span className="text-amber-200 font-medium tracking-wide">
+                                        Whispering... (Tap to Pause ❚❚)
+                                      </span>
+                                    </>
                                   ) : (
-                                    <Play size={15} fill="currentColor" />
+                                    <>
+                                      <Play size={10} className="text-amber-300 fill-amber-300" />
+                                      <span className="text-amber-200 font-medium tracking-wide">
+                                        Play Voice Whisper ▶
+                                      </span>
+                                    </>
                                   )}
-                                  <span>{isPlayingAudio ? "Pause Voice Whisper" : "Listen to Voice Whisper 🎙️"}</span>
                                 </button>
 
                                 {/* Sender Live Re-Record & Upload Options */}
                                 {!isReceiver && (
-                                  <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-amber-400/25">
+                                  <div className="flex items-center gap-2 mt-0.5 pt-1 border-t border-amber-400/20">
                                     <button
                                       type="button"
                                       onClick={isRecordingPuppet ? stopPuppetRecording : startPuppetRecording}
-                                      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10.5px] font-serif font-semibold cursor-pointer border transition-all ${
+                                      className={`flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[10.5px] font-serif font-semibold cursor-pointer border transition-all ${
                                         isRecordingPuppet
                                           ? "bg-rose-500/30 border-rose-400 text-rose-200 animate-pulse font-bold"
                                           : "bg-white/10 hover:bg-white/20 border-amber-400/30 text-amber-200 hover:text-amber-100"
                                       }`}
                                     >
-                                      <Mic size={12} className={isRecordingPuppet ? "text-rose-400 animate-bounce" : ""} />
+                                      <Mic size={11} className={isRecordingPuppet ? "text-rose-400 animate-bounce" : ""} />
                                       <span>
                                         {isRecordingPuppet
-                                          ? `Recording... 0:${puppetRecordSeconds.toString().padStart(2, "0")} (Tap to Stop ⏹️)`
+                                          ? `Recording... 0:${puppetRecordSeconds.toString().padStart(2, "0")} (Stop ⏹️)`
                                           : "Record Again 🎙️"}
                                       </span>
                                     </button>
@@ -2037,7 +2074,7 @@ export function MailboxModal({
                                       disabled={isUploadingPuppetAudio}
                                       className="flex items-center gap-1 text-[10.5px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer disabled:opacity-50"
                                     >
-                                      <Upload size={12} />
+                                      <Upload size={11} />
                                       <span>{isUploadingPuppetAudio ? "Uploading... ⏳" : "Upload Voice File"}</span>
                                     </button>
                                   </div>

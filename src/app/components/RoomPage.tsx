@@ -681,7 +681,7 @@ export default function RoomPage() {
       // 2. Upload to Supabase cloud storage in background
       (async () => {
         try {
-          const cloudUrl = await uploadGiftFile(file);
+          const cloudUrl = await uploadAudioToCloud(file, fileName);
           if (cloudUrl && cloudUrl.startsWith("http")) {
             const currentProj = projectRef.current || project;
             const updatedProject = saveGiftProject({

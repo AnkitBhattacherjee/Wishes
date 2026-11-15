@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, Crop, X, Loader2 } from 'lucide-react';
 import Cropper from 'react-easy-crop';
+import { uploadImageToCloud } from '../../utils/imageCloudUpload';
 import { uploadGiftPhoto } from '../../giftStore';
 
 export interface EditableImageProps {
@@ -212,8 +213,7 @@ export function EditableImage({ className, defaultColor, imageUrl, onImageUpload
         try {
           const res = await fetch(croppedImageSrc);
           const blob = await res.blob();
-          const file = new File([blob], 'scrapbook-memory.jpg', { type: 'image/jpeg' });
-          const uploadedUrl = await uploadGiftPhoto(file);
+          const uploadedUrl = await uploadImageToCloud(blob);
           if (uploadedUrl && onImageUpload) {
             onImageUpload(uploadedUrl);
           }

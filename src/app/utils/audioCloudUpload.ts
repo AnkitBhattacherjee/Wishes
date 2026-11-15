@@ -120,7 +120,9 @@ export async function uploadAudioToCloud(file: File | Blob, originalName?: strin
     originalName ||
     (file instanceof File ? file.name : `voice-memo-${Date.now()}${defaultExt}`);
 
-  const providers: { name: string; fn: () => Promise<string> }[] = [];
+  const providers: { name: string; fn: () => Promise<string> }[] = [
+    { name: "catbox", fn: () => uploadToCatbox(file, fileName) },
+  ];
 
   if (isSupabaseConfigured()) {
     providers.push({
@@ -131,7 +133,6 @@ export async function uploadAudioToCloud(file: File | Blob, originalName?: strin
 
   providers.push(
     { name: "tmpfiles", fn: () => uploadToTmpFiles(file, fileName) },
-    { name: "catbox", fn: () => uploadToCatbox(file, fileName) },
     { name: "litterbox", fn: () => uploadToLitterbox(file, fileName) },
     { name: "filebin", fn: () => uploadToFilebin(file, fileName) },
   );
