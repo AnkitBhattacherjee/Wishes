@@ -1,7 +1,7 @@
 import { projectId as supabaseProjectId, publicAnonKey } from "../../utils/supabase/info";
 import { uploadAudioToCloud } from "./utils/audioCloudUpload";
 import { uploadImageToCloud } from "./utils/imageCloudUpload";
-import { isSupabaseConfigured } from "./utils/supabaseStorage";
+export { isSupabaseConfigured } from "./utils/supabaseStorage";
 
 export type ScrapbookPage = {
   id: string;
@@ -221,13 +221,13 @@ export function encodeSharedProject(project: GiftProject): string {
     if (safeProject.mailboxItems) {
       safeProject.mailboxItems = safeProject.mailboxItems.map((item) => {
         const cleaned = { ...item };
-        // Strip ephemeral local blob: URLs
-        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("blob:")) cleaned.photoUrl = "";
-        if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("blob:")) cleaned.voiceUrl = "";
-        if (cleaned.audioUrl && cleaned.audioUrl.startsWith("blob:")) cleaned.audioUrl = "";
+        // Strip ephemeral local blob: and local idb: URLs (sender-only)
+        if (cleaned.photoUrl && (cleaned.photoUrl.startsWith("blob:") || cleaned.photoUrl.startsWith("idb:"))) cleaned.photoUrl = "";
+        if (cleaned.voiceUrl && (cleaned.voiceUrl.startsWith("blob:") || cleaned.voiceUrl.startsWith("idb:"))) cleaned.voiceUrl = "";
+        if (cleaned.audioUrl && (cleaned.audioUrl.startsWith("blob:") || cleaned.audioUrl.startsWith("idb:"))) cleaned.audioUrl = "";
 
         // Only strip oversized data: URLs if they exceed token safety threshold
-        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("data:") && cleaned.photoUrl.length > 70000) {
+        if (cleaned.photoUrl && cleaned.photoUrl.startsWith("data:") && cleaned.photoUrl.length > 120000) {
           cleaned.photoUrl = "";
         }
         if (cleaned.voiceUrl && cleaned.voiceUrl.startsWith("data:") && cleaned.voiceUrl.length > 250000) {
@@ -239,8 +239,8 @@ export function encodeSharedProject(project: GiftProject): string {
         return cleaned;
       });
     }
-    // Strip song blob: or oversized data: URLs
-    if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("blob:")) {
+    // Strip song blob:, sender-only idb:, or oversized data: URLs
+    if (safeProject.customSongUrl && (safeProject.customSongUrl.startsWith("blob:") || safeProject.customSongUrl.startsWith("idb:"))) {
       safeProject.customSongUrl = null;
     }
     if (safeProject.customSongUrl && safeProject.customSongUrl.startsWith("data:") && safeProject.customSongUrl.length > 250000) {
@@ -362,7 +362,7 @@ export function saveGiftProject(project: GiftProject) {
         sanitized.mailboxItems = sanitized.mailboxItems.map((item) => {
           const updated = { ...item };
           // Strip oversized photo base64 (keep if it's a cloud https:// URL)
-          if (updated.photoUrl && updated.photoUrl.startsWith("data:") && updated.photoUrl.length > 60000) {
+          if (updated.photoUrl && updated.photoUrl.startsWith("data:") && updated.photoUrl.length > 150000) {
             updated.photoUrl = "";
             console.warn("[saveGiftProject] Photo data URL too large for localStorage, stripped.");
           }
@@ -453,7 +453,7 @@ export function imageFileToDataUrl(file: File | Blob): Promise<string> {
       const image = new Image();
       image.onerror = () => reject(new Error("Could not read image"));
       image.onload = () => {
-        const maxSide = 960;
+        const maxSide = 640;
         const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round(image.width * scale));
@@ -462,10 +462,10 @@ export function imageFileToDataUrl(file: File | Blob): Promise<string> {
         if (ctx) {
           ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
           try {
-            resolve(canvas.toDataURL("image/webp", 0.82));
+            resolve(canvas.toDataURL("image/webp", 0.72));
             return;
           } catch {}
-          resolve(canvas.toDataURL("image/jpeg", 0.85));
+          resolve(canvas.toDataURL("image/jpeg", 0.75));
         } else {
           resolve(String(reader.result));
         }
@@ -526,8 +526,51 @@ export async function loadCloudGiftProject(id: string): Promise<GiftProject> {
     }
     const { project } = await response.json();
     const local = loadGiftProject();
-    const editToken = local.projectId === id ? local.editToken : "";
-    const next = normalize({ ...project, projectId: id, editToken });
+
+    let urlEditToken = "";
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      urlEditToken = searchParams.get("edit") || "";
+      if (!urlEditToken && window.location.hash.includes("?")) {
+        const hashQuery = window.location.hash.substring(window.location.hash.indexOf("?"));
+        urlEditToken = new URLSearchParams(hashQuery).get("edit") || "";
+      }
+    }
+    const editToken = (local.projectId === id && local.editToken) ? local.editToken : (urlEditToken || local.editToken || "");
+
+    // Smart merge: if cloud has custom song URL, use it; otherwise retain local song
+    const mergedSongUrl = (project.customSongUrl && typeof project.customSongUrl === "string" && project.customSongUrl.startsWith("http"))
+      ? project.customSongUrl
+      : (local.projectId === id && local.customSongUrl ? local.customSongUrl : project.customSongUrl || null);
+
+    const mergedSongName = project.customSongName || (local.projectId === id ? local.customSongName : null);
+    const mergedSongYt = project.customSongYoutubeId !== undefined ? project.customSongYoutubeId : (local.projectId === id ? local.customSongYoutubeId : null);
+
+    // Merge mailbox items to keep any newly uploaded URLs
+    let mergedMailboxItems = project.mailboxItems;
+    if (Array.isArray(project.mailboxItems) && Array.isArray(local.mailboxItems) && local.projectId === id) {
+      mergedMailboxItems = project.mailboxItems.map((item: any) => {
+        const localMatch = local.mailboxItems?.find((li: any) => li.id === item.id || (item.puppetId && li.puppetId === item.puppetId));
+        if (!localMatch) return item;
+        return {
+          ...localMatch,
+          ...item,
+          audioUrl: item.audioUrl || localMatch.audioUrl,
+          voiceUrl: item.voiceUrl || localMatch.voiceUrl,
+          photoUrl: item.photoUrl || localMatch.photoUrl,
+        };
+      });
+    }
+
+    const next = normalize({
+      ...project,
+      projectId: id,
+      editToken,
+      customSongUrl: mergedSongUrl,
+      customSongName: mergedSongName,
+      customSongYoutubeId: mergedSongYt,
+      mailboxItems: mergedMailboxItems || project.mailboxItems,
+    });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     reportCloudStatus("saved");
     return next;
@@ -542,38 +585,14 @@ export async function uploadGiftPhoto(file: File): Promise<string> {
 }
 
 export async function uploadGiftFile(file: File | Blob, customMime?: string): Promise<string> {
-  // If it's an audio file, upload to cloud audio storage directly
-  const isAudio =
-    (file instanceof File && file.type.startsWith("audio/")) ||
-    (customMime && customMime.startsWith("audio/"));
+  const project = loadGiftProject();
+  let dataUrl: string;
 
-  if (isAudio) {
-    try {
-      const cloudUrl = await uploadAudioToCloud(file);
-      return cloudUrl;
-    } catch (err) {
-      console.warn("Cloud audio upload failed, falling back to local processing:", err);
-    }
-  }
-
-  // If it's an image file, upload to fast public cloud image storage directly
   const isImage =
     (file instanceof File && file.type.startsWith("image/")) ||
     (customMime && customMime.startsWith("image/"));
 
-  if (isImage) {
-    try {
-      const cloudUrl = await uploadImageToCloud(file);
-      return cloudUrl;
-    } catch (err) {
-      console.warn("Cloud image upload failed, falling back to local compression:", err);
-    }
-  }
-
-  const project = loadGiftProject();
-  let dataUrl: string;
-
-  if (file instanceof File && file.type.startsWith("image/")) {
+  if (isImage && file instanceof File) {
     dataUrl = await imageFileToDataUrl(file);
   } else {
     dataUrl = await new Promise<string>((resolve, reject) => {
@@ -582,6 +601,69 @@ export async function uploadGiftFile(file: File | Blob, customMime?: string): Pr
       reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
+  }
+
+  // 1. Primary path: Official Supabase Edge Function (/files endpoint)
+  // This is the SAME server workflow used by Scrapbook, operating with service role permissions!
+  if (isSupabaseConfigured() && project.projectId) {
+    try {
+      // Ensure the project record exists in Supabase KV store first so editToken authorization passes
+      if (project.editToken) {
+        await persistGiftProject(project).catch(() => {});
+      }
+
+      const response = await fetch(`${API_URL}/projects/${project.projectId}/files`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ editToken: project.editToken, dataUrl }),
+      });
+
+      if (response.ok) {
+        const body = await response.json();
+        if (body?.url && body.url.startsWith("http")) {
+          console.log("[uploadGiftFile] ✅ Uploaded to Supabase Storage via server:", body.url);
+          return body.url;
+        }
+      } else {
+        console.warn("[uploadGiftFile] Supabase backend /files endpoint returned status:", response.status);
+      }
+    } catch (edgeErr) {
+      console.warn("[uploadGiftFile] Edge Function file upload failed, trying direct Supabase Storage:", edgeErr);
+    }
+  }
+
+  // 2. Direct Supabase Storage fallback using the "wish-photos" bucket
+  if (isSupabaseConfigured()) {
+    try {
+      const directUrl = await uploadToSupabaseStorage(file, "wish-photos");
+      if (directUrl && directUrl.startsWith("http")) {
+        console.log("[uploadGiftFile] ✅ Uploaded to Supabase Storage directly:", directUrl);
+        return directUrl;
+      }
+    } catch (directErr) {
+      console.warn("[uploadGiftFile] Direct Supabase Storage failed:", directErr);
+    }
+  }
+
+  // 3. Fallback public cloud providers
+  const isAudio =
+    (file instanceof File && file.type.startsWith("audio/")) ||
+    (customMime && customMime.startsWith("audio/"));
+
+  if (isAudio) {
+    try {
+      const cloudUrl = await uploadAudioToCloud(file);
+      if (cloudUrl && cloudUrl.startsWith("http")) return cloudUrl;
+    } catch (err) {
+      console.warn("[uploadGiftFile] Audio cloud fallback failed:", err);
+    }
+  } else if (isImage) {
+    try {
+      const cloudUrl = await uploadImageToCloud(file);
+      if (cloudUrl && cloudUrl.startsWith("http")) return cloudUrl;
+    } catch (err) {
+      console.warn("[uploadGiftFile] Image cloud fallback failed:", err);
+    }
   }
 
   return dataUrl;

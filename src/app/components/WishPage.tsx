@@ -14,9 +14,11 @@ import {
   loadGiftProject,
   persistGiftProject,
   saveGiftProject,
+  isSupabaseConfigured,
   type GiftProject,
   type CloudStatus,
 } from "../giftStore";
+import { preloadProjectAudios } from "../utils/audioPreloader";
 import svgPaths from "../../imports/svg-mflmjqo28j";
 import imgImage10 from "figma:asset/22caa5ad402836f5fe397bca16006c6983d5252d.png";
 import imgLetterPaper from "../../imports/letter_paper.png";
@@ -208,9 +210,11 @@ function RefreshIcon() {
 function InteractiveSticker({
   sticker,
   onClick,
+  isReceiver,
 }: {
   sticker: (typeof stickers)[0];
   onClick?: () => void;
+  isReceiver?: boolean;
 }) {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -239,6 +243,18 @@ function InteractiveSticker({
       <div className="absolute -top-9 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs font-bold text-pink-600 shadow-lg whitespace-nowrap pointer-events-none border border-pink-200 z-30">
         {sticker.label}
       </div>
+
+      {/* Receiver Subtle Bottom Label Pill */}
+      {isReceiver && (
+        <motion.div
+          animate={{ y: [0, -2, 0] }}
+          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute -bottom-2 sm:-bottom-3 left-1/2 -translate-x-1/2 opacity-85 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[11px] font-semibold text-pink-700 shadow-sm border border-pink-200/70 whitespace-nowrap pointer-events-none z-20 flex items-center gap-1"
+        >
+          <Sparkles size={11} className="text-pink-500" />
+          <span>{sticker.label}</span>
+        </motion.div>
+      )}
 
       <div
         className="w-[230px] h-[230px] sm:w-[260px] sm:h-[260px] md:w-[280px] md:h-[280px] lg:w-[300px] lg:h-[300px] xl:w-[320px] xl:h-[320px] relative flex items-center justify-center pointer-events-none"
@@ -574,7 +590,7 @@ function WishModal({
                     Yours always,
                   </p>
                   <p className="font-['Poppins',sans-serif] text-[10px] sm:text-[11px] font-bold text-pink-700/90 tracking-wider mt-1 uppercase">
-                    Prepared with love by your special person
+                    Prepared with heartfelt love for you
                   </p>
                 </div>
 
@@ -719,18 +735,20 @@ export default function WishPage() {
   // Automatically show user guide tour on first visit
   useEffect(() => {
     try {
-      const dismissed = localStorage.getItem("wish_guide_dismissed");
+      const storageKey = isReceiver ? "wish_receiver_guide_seen" : "wish_guide_dismissed";
+      const dismissed = localStorage.getItem(storageKey);
       if (!dismissed) {
-        const timer = setTimeout(() => setIsGuideOpen(true), 750);
+        const timer = setTimeout(() => setIsGuideOpen(true), 650);
         return () => clearTimeout(timer);
       }
     } catch {}
-  }, []);
+  }, [isReceiver]);
 
   const handleCloseGuide = () => {
     setIsGuideOpen(false);
     try {
-      localStorage.setItem("wish_guide_dismissed", "true");
+      const storageKey = isReceiver ? "wish_receiver_guide_seen" : "wish_guide_dismissed";
+      localStorage.setItem(storageKey, "true");
     } catch {}
   };
 
@@ -744,16 +762,27 @@ export default function WishPage() {
   }, []);
 
   useEffect(() => {
-    const sharedId = new URLSearchParams(location.search).get("gift");
-    if (!sharedId || !/^[0-9a-f-]{30,40}$/i.test(sharedId) || project.editToken) return;
+    const targetId =
+      giftParam ||
+      (project.projectId && /^[0-9a-f-]{30,40}$/i.test(project.projectId) ? project.projectId : null);
+    if (!targetId || !isSupabaseConfigured()) return;
     setCloudStatus("loading");
-    loadCloudGiftProject(sharedId)
+    loadCloudGiftProject(targetId)
       .then((loaded) => {
         setProject(loaded);
         setCloudStatus("saved");
+        preloadProjectAudios(loaded);
       })
       .catch(() => setCloudStatus("error"));
-  }, [location.search, project.editToken]);
+  }, [giftParam, project.projectId]);
+
+  // Automatically start background retrieval/prefetching for all gift audio files
+  // (Celebration room custom song, mailbox songs & voice memos) as soon as the sealed link is opened
+  useEffect(() => {
+    if (project) {
+      preloadProjectAudios(project);
+    }
+  }, [project.customSongUrl, project.mailboxItems]);
 
   const projectRef = useRef(project);
   useEffect(() => {
@@ -927,203 +956,208 @@ export default function WishPage() {
         }}
       />
 
-      {/* Change BG button & popover dropdown */}
-      <div className="absolute top-[28px] left-[28px] z-40" ref={bgDropdownRef}>
-        <motion.button
-          type="button"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border border-white/60 transition-all hover:bg-white/90 shadow-md backdrop-blur-md"
-          style={{
-            background: isBgDropdownOpen ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.72)",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5)",
-          }}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={() => setIsBgDropdownOpen((prev) => !prev)}
-        >
-          <motion.div
-            animate={{ rotate: isBgDropdownOpen ? 180 : 0 }}
-            transition={{ duration: 0.25 }}
-            className="text-[#6b5e58]"
+      {/* Change BG button & popover dropdown - SENDER ONLY */}
+      {!isReceiver && (
+        <div className="absolute top-[28px] left-[28px] z-40" ref={bgDropdownRef}>
+          <motion.button
+            type="button"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border border-white/60 transition-all hover:bg-white/90 shadow-md backdrop-blur-md"
+            style={{
+              background: isBgDropdownOpen ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.72)",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5)",
+            }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setIsBgDropdownOpen((prev) => !prev)}
           >
-            <ImageIcon size={16} className="text-[#c4587a]" />
-          </motion.div>
-          <span className="font-['Poppins',sans-serif] text-[13px] font-medium text-[#5a4e48]">
-            {isUsingCustom ? "Custom bg active" : "Change bg"}
-          </span>
-          <ChevronDown
-            size={14}
-            className={`text-[#765762] transition-transform duration-200 ${isBgDropdownOpen ? "rotate-180" : ""}`}
-          />
-        </motion.button>
-
-        {/* Dropdown Menu Popover */}
-        <AnimatePresence>
-          {isBgDropdownOpen && (
             <motion.div
-              initial={{ opacity: 0, y: -8, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.96 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="absolute left-0 top-full mt-2.5 w-[330px] sm:w-[380px] rounded-2xl bg-white/95 backdrop-blur-xl border border-pink-100 shadow-[0_20px_50px_rgba(70,30,50,0.2)] p-4 z-50 overflow-hidden text-[#4a3b32]"
+              animate={{ rotate: isBgDropdownOpen ? 180 : 0 }}
+              transition={{ duration: 0.25 }}
+              className="text-[#6b5e58]"
             >
-              {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-pink-100/70">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-7 h-7 rounded-full bg-pink-100/80 text-pink-600">
-                    <Sparkles size={14} />
-                  </span>
-                  <div>
-                    <h4 className="font-['Playfair_Display',serif] font-bold text-sm text-[#3d2730]">
-                      Background Scenery
-                    </h4>
-                    <p className="font-['Poppins',sans-serif] text-[10px] text-[#8c6b77]">
-                      Paste an Unsplash link or pick a preset
-                    </p>
-                  </div>
-                </div>
-                {(isUsingCustom || bgIndex !== 0) && (
-                  <button
-                    type="button"
-                    onClick={handleResetToDefault}
-                    className="flex items-center gap-1 text-[11px] font-medium text-pink-600 hover:text-pink-800 transition-colors bg-pink-50 hover:bg-pink-100 px-2 py-1 rounded-full cursor-pointer"
-                    title="Reset to original stationery watercolor"
-                  >
-                    <RotateCcw size={11} />
-                    <span>Reset</span>
-                  </button>
-                )}
-              </div>
+              <ImageIcon size={16} className="text-[#c4587a]" />
+            </motion.div>
+            <span className="font-['Poppins',sans-serif] text-[13px] font-medium text-[#5a4e48]">
+              {isUsingCustom ? "Custom bg active" : "Change bg"}
+            </span>
+            <ChevronDown
+              size={14}
+              className={`text-[#765762] transition-transform duration-200 ${isBgDropdownOpen ? "rotate-180" : ""}`}
+            />
+          </motion.button>
 
-              {/* Unsplash Input Section */}
-              <div className="mt-3.5">
-                <label className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-1.5">
-                  Paste Unsplash / Image Link
-                </label>
-                <form onSubmit={handleApplyCustomUrl} className="flex gap-1.5">
-                  <div className="relative flex-1">
-                    <input
-                      type="url"
-                      value={unsplashInput}
-                      onChange={(e) => {
-                        setUnsplashInput(e.target.value);
-                        if (unsplashError) setUnsplashError(null);
-                      }}
-                      placeholder="https://unsplash.com/photos/..."
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-pink-200/80 bg-white/80 focus:bg-white focus:outline-none focus:ring-2 focus:ring-pink-300 transition-all font-['Poppins',sans-serif] text-[#3d2730] placeholder:text-gray-400"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="px-3.5 py-2 rounded-xl text-xs font-semibold font-['Poppins',sans-serif] bg-gradient-to-r from-pink-500 to-[#c4587a] text-white shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer whitespace-nowrap"
-                  >
-                    Apply
-                  </button>
-                </form>
-
-                {unsplashError && (
-                  <p className="mt-1 text-[11px] text-red-500 font-['Poppins',sans-serif]">
-                    {unsplashError}
-                  </p>
-                )}
-
-                {/* Helpful tip with link to Unsplash */}
-                <div className="flex items-center justify-between mt-1.5 text-[10px] text-[#8c6b77] font-['Poppins',sans-serif]">
-                  <span>Paste any Unsplash photo or CDN image</span>
-                  <a
-                    href="https://unsplash.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-0.5 text-pink-600 hover:underline"
-                  >
-                    Browse Unsplash <ExternalLink size={9} />
-                  </a>
-                </div>
-
-                {/* Active Custom Background Badge */}
-                {isUsingCustom && (
-                  <div className="mt-2.5 flex items-center justify-between p-2 rounded-xl bg-pink-50/80 border border-pink-200/80">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <img
-                        src={activeCustomBg}
-                        alt="Current custom"
-                        className="w-7 h-7 rounded-lg object-cover border border-pink-200 shrink-0"
-                      />
-                      <span className="font-['Poppins',sans-serif] text-[11px] text-pink-800 font-medium truncate">
-                        Custom Unsplash active
-                      </span>
+          {/* Dropdown Menu Popover */}
+          <AnimatePresence>
+            {isBgDropdownOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className="absolute left-0 top-full mt-2.5 w-[330px] sm:w-[380px] rounded-2xl bg-white/95 backdrop-blur-xl border border-pink-100 shadow-[0_20px_50px_rgba(70,30,50,0.2)] p-4 z-50 overflow-hidden text-[#4a3b32]"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-pink-100/70">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-7 h-7 rounded-full bg-pink-100/80 text-pink-600">
+                      <Sparkles size={14} />
+                    </span>
+                    <div>
+                      <h4 className="font-['Playfair_Display',serif] font-bold text-sm text-[#3d2730]">
+                        Background Scenery
+                      </h4>
+                      <p className="font-['Poppins',sans-serif] text-[10px] text-[#8c6b77]">
+                        Paste an Unsplash link or pick a preset
+                      </p>
                     </div>
+                  </div>
+                  {(isUsingCustom || bgIndex !== 0) && (
                     <button
                       type="button"
                       onClick={handleResetToDefault}
-                      className="text-pink-600 hover:text-red-600 p-1 rounded-md transition-colors shrink-0 cursor-pointer"
-                      title="Remove custom image"
+                      className="flex items-center gap-1 text-[11px] font-medium text-pink-600 hover:text-pink-800 transition-colors bg-pink-50 hover:bg-pink-100 px-2 py-1 rounded-full cursor-pointer"
+                      title="Reset to original stationery watercolor"
                     >
-                      <Trash2 size={13} />
+                      <RotateCcw size={11} />
+                      <span>Reset</span>
                     </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Presets Grid */}
-              <div className="mt-4 pt-3 border-t border-pink-100/70">
-                <span className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-2">
-                  Curated Scenery Presets
-                </span>
-                <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
-                  {PRESET_BACKGROUNDS.map((preset, idx) => {
-                    const isSelected = !isUsingCustom && bgIndex === idx;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => handleSelectPreset(idx)}
-                        className={`group relative flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${
-                          isSelected
-                            ? "bg-pink-100/70 border-pink-400 ring-2 ring-pink-300 shadow-xs"
-                            : "bg-white/60 hover:bg-white border-pink-100/90 hover:border-pink-300"
-                        }`}
-                      >
-                        <img
-                          src={preset.thumbnail}
-                          alt={preset.name}
-                          className="w-9 h-9 rounded-lg object-cover shrink-0 border border-black/5"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-['Poppins',sans-serif] text-[11px] font-semibold text-[#3d2730] truncate group-hover:text-pink-700">
-                            {preset.name}
-                          </p>
-                          <p className="font-['Poppins',sans-serif] text-[9px] text-[#8c6b77] truncate">
-                            {preset.subtitle}
-                          </p>
-                        </div>
-                        {isSelected && (
-                          <div className="shrink-0 w-4 h-4 rounded-full bg-pink-600 text-white flex items-center justify-center">
-                            <Check size={10} strokeWidth={3} />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
+                  )}
                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
 
-      <motion.button
-        className={`absolute bottom-6 left-7 z-30 flex items-center gap-2 rounded-full px-5 py-3 font-['Poppins',sans-serif] text-[13px] shadow-lg backdrop-blur-md ${
-          hasChanges
-            ? "bg-[#c4587a] text-white"
-            : "border border-white/35 bg-white/65 text-[#765762]"
-        }`}
-        whileHover={{ scale: 1.04 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={saveChanges}
-      >
-        {hasChanges ? <span className="size-2 rounded-full bg-white shadow-[0_0_8px_white]" /> : <Check size={15} />}
-        {hasChanges ? (hasSaved ? "Save update" : "Save") : "Update"}
-      </motion.button>
+                {/* Unsplash Input Section */}
+                <div className="mt-3.5">
+                  <label className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-1.5">
+                    Paste Unsplash / Image Link
+                  </label>
+                  <form onSubmit={handleApplyCustomUrl} className="flex gap-1.5">
+                    <div className="relative flex-1">
+                      <input
+                        type="url"
+                        value={unsplashInput}
+                        onChange={(e) => {
+                          setUnsplashInput(e.target.value);
+                          if (unsplashError) setUnsplashError(null);
+                        }}
+                        placeholder="https://unsplash.com/photos/..."
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-pink-200/80 bg-white/80 focus:bg-white focus:outline-none focus:ring-2 focus:ring-pink-300 transition-all font-['Poppins',sans-serif] text-[#3d2730] placeholder:text-gray-400"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="px-3.5 py-2 rounded-xl text-xs font-semibold font-['Poppins',sans-serif] bg-gradient-to-r from-pink-500 to-[#c4587a] text-white shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      Apply
+                    </button>
+                  </form>
+
+                  {unsplashError && (
+                    <p className="mt-1 text-[11px] text-red-500 font-['Poppins',sans-serif]">
+                      {unsplashError}
+                    </p>
+                  )}
+
+                  {/* Helpful tip with link to Unsplash */}
+                  <div className="flex items-center justify-between mt-1.5 text-[10px] text-[#8c6b77] font-['Poppins',sans-serif]">
+                    <span>Paste any Unsplash photo or CDN image</span>
+                    <a
+                      href="https://unsplash.com"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-0.5 text-pink-600 hover:underline"
+                    >
+                      Browse Unsplash <ExternalLink size={9} />
+                    </a>
+                  </div>
+
+                  {/* Active Custom Background Badge */}
+                  {isUsingCustom && (
+                    <div className="mt-2.5 flex items-center justify-between p-2 rounded-xl bg-pink-50/80 border border-pink-200/80">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={activeCustomBg}
+                          alt="Current custom"
+                          className="w-7 h-7 rounded-lg object-cover border border-pink-200 shrink-0"
+                        />
+                        <span className="font-['Poppins',sans-serif] text-[11px] text-pink-800 font-medium truncate">
+                          Custom Unsplash active
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetToDefault}
+                        className="text-pink-600 hover:text-red-600 p-1 rounded-md transition-colors shrink-0 cursor-pointer"
+                        title="Remove custom image"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Presets Grid */}
+                <div className="mt-4 pt-3 border-t border-pink-100/70">
+                  <span className="block font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44] mb-2">
+                    Curated Scenery Presets
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
+                    {PRESET_BACKGROUNDS.map((preset, idx) => {
+                      const isSelected = !isUsingCustom && bgIndex === idx;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => handleSelectPreset(idx)}
+                          className={`group relative flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${
+                            isSelected
+                              ? "bg-pink-100/70 border-pink-400 ring-2 ring-pink-300 shadow-xs"
+                              : "bg-white/60 hover:bg-white border-pink-100/90 hover:border-pink-300"
+                          }`}
+                        >
+                          <img
+                            src={preset.thumbnail}
+                            alt={preset.name}
+                            className="w-9 h-9 rounded-lg object-cover shrink-0 border border-black/5"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-['Poppins',sans-serif] text-[11px] font-semibold text-[#3d2730] truncate group-hover:text-pink-700">
+                              {preset.name}
+                            </p>
+                            <p className="font-['Poppins',sans-serif] text-[9px] text-[#8c6b77] truncate">
+                              {preset.subtitle}
+                            </p>
+                          </div>
+                          {isSelected && (
+                            <div className="shrink-0 w-4 h-4 rounded-full bg-pink-600 text-white flex items-center justify-center">
+                              <Check size={10} strokeWidth={3} />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Update button - SENDER ONLY */}
+      {!isReceiver && (
+        <motion.button
+          className={`absolute bottom-6 left-7 z-30 flex items-center gap-2 rounded-full px-5 py-3 font-['Poppins',sans-serif] text-[13px] shadow-lg backdrop-blur-md ${
+            hasChanges
+              ? "bg-[#c4587a] text-white"
+              : "border border-white/35 bg-white/65 text-[#765762]"
+          }`}
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.96 }}
+          onClick={saveChanges}
+        >
+          {hasChanges ? <span className="size-2 rounded-full bg-white shadow-[0_0_8px_white]" /> : <Check size={15} />}
+          {hasChanges ? (hasSaved ? "Save update" : "Save") : "Update"}
+        </motion.button>
+      )}
 
       {/* Cloud status - only shown for draft editor, not receiver */}
       {!isReceiver && (
@@ -1132,54 +1166,77 @@ export default function WishPage() {
         </div>
       )}
 
-      {/* Guide button */}
-      <motion.button
-        className="absolute right-[215px] top-[28px] z-30 flex items-center gap-1.5 rounded-full border-none px-3.5 py-2.5 transition-colors hover:bg-white/85 cursor-pointer"
-        style={{
-          background: "rgba(255,255,255,0.65)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
-        }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={() => setIsGuideOpen(true)}
-        title="Open User Guide"
-      >
-        <Sparkles size={14} className="text-[#c4587a]" />
-        <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48] hidden sm:inline">Guide</span>
-      </motion.button>
+      {/* Top Action Buttons: Receiver sees ONLY the elegant Gift Guide; Sender sees Guide, Share & Back */}
+      {isReceiver ? (
+        <motion.button
+          className="absolute right-[28px] top-[28px] z-30 flex items-center gap-2 rounded-full px-4 py-2.5 cursor-pointer border border-white/80 shadow-md backdrop-blur-md transition-all hover:bg-white/95"
+          style={{
+            background: "rgba(255, 255, 255, 0.78)",
+            boxShadow: "0 4px 20px rgba(196,88,122,0.18), 0 0 0 1px rgba(255,255,255,0.7)",
+          }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.96 }}
+          onClick={() => setIsGuideOpen(true)}
+          title="Open Celebration Gift Guide ✨"
+        >
+          <Sparkles size={15} className="text-pink-600 animate-spin" style={{ animationDuration: "5s" }} />
+          <span className="font-['Poppins',sans-serif] text-[13px] font-semibold text-[#5a3a44]">
+            ✨ Gift Guide
+          </span>
+        </motion.button>
+      ) : (
+        <>
+          {/* Guide button - Sender */}
+          <motion.button
+            className="absolute right-[215px] top-[28px] z-30 flex items-center gap-1.5 rounded-full border-none px-3.5 py-2.5 transition-colors hover:bg-white/85 cursor-pointer"
+            style={{
+              background: "rgba(255,255,255,0.65)",
+              backdropFilter: "blur(12px)",
+              boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
+            }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setIsGuideOpen(true)}
+            title="Open User Guide"
+          >
+            <Sparkles size={14} className="text-[#c4587a]" />
+            <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48] hidden sm:inline">Guide</span>
+          </motion.button>
 
-      <motion.button
-        className="absolute right-[112px] top-[28px] z-30 flex items-center gap-2 rounded-full border-none px-4 py-2.5 cursor-pointer"
-        style={{
-          background: "rgba(255,255,255,0.65)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
-        }}
-        whileHover={{ scale: 1.04 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={() => setIsShareModalOpen(true)}
-      >
-        <Share2 size={15} className={project.isSealed ? "text-[#c4587a]" : "text-[#6b5e58]"} />
-        <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48]">
-          {project.isSealed ? "Sealed 💌" : "Share"}
-        </span>
-      </motion.button>
+          {/* Share button - Sender */}
+          <motion.button
+            className="absolute right-[112px] top-[28px] z-30 flex items-center gap-2 rounded-full border-none px-4 py-2.5 cursor-pointer"
+            style={{
+              background: "rgba(255,255,255,0.65)",
+              backdropFilter: "blur(12px)",
+              boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
+            }}
+            whileHover={{ scale: 1.04 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setIsShareModalOpen(true)}
+          >
+            <Share2 size={15} className={project.isSealed ? "text-[#c4587a]" : "text-[#6b5e58]"} />
+            <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48]">
+              {project.isSealed ? "Sealed 💌" : "Share"}
+            </span>
+          </motion.button>
 
-      {/* Back button */}
-      <motion.button
-        className="absolute top-[28px] right-[28px] z-30 flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border-none"
-        style={{
-          background: "rgba(255,255,255,0.65)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
-        }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={() => navigate("/")}
-      >
-        <span className="font-['Poppins',sans-serif] text-[14px] text-[#5a4e48]">Back</span>
-      </motion.button>
+          {/* Back button - Sender */}
+          <motion.button
+            className="absolute top-[28px] right-[28px] z-30 flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border-none"
+            style={{
+              background: "rgba(255,255,255,0.65)",
+              backdropFilter: "blur(12px)",
+              boxShadow: "0 2px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
+            }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => navigate("/")}
+          >
+            <span className="font-['Poppins',sans-serif] text-[14px] text-[#5a4e48]">Back</span>
+          </motion.button>
+        </>
+      )}
 
       {/* Ambient Floating Accents filling whitespace */}
       <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
@@ -1216,12 +1273,12 @@ export default function WishPage() {
         ))}
       </div>
 
-      {/* Top Heading: Tap placeholder to write a custom heading / wish line */}
+      {/* Top Heading: Receiver sees customized title or celebration title; Sender can tap to edit */}
       <motion.div
         className="absolute top-[32px] sm:top-[42px] left-1/2 -translate-x-1/2 z-20 max-w-[94vw] text-center"
-        whileHover={!isEditingHeader ? { scale: 1.02 } : undefined}
+        whileHover={!isReceiver && !isEditingHeader ? { scale: 1.02 } : undefined}
       >
-        {isEditingHeader ? (
+        {!isReceiver && isEditingHeader ? (
           <div className="flex flex-col items-center">
             <input
               ref={headerInputRef}
@@ -1274,9 +1331,13 @@ export default function WishPage() {
             }`}
             title={!isReceiver ? "Tap to write a line ✍️" : undefined}
           >
-            <div className="flex items-center justify-center gap-2 px-3 py-1 rounded-2xl hover:bg-white/30 backdrop-blur-xs transition-all">
-              <p className="font-['Alex_Brush',cursive] text-[48px] sm:text-[60px] lg:text-[68px] text-[#3a2a2a] select-none leading-none drop-shadow-sm group-hover:text-pink-900 transition-colors">
-                {project.headerTitle?.trim() || "Write Your Wish"}
+            <div className={`flex items-center justify-center gap-2 px-3 py-1 rounded-2xl transition-all ${!isReceiver ? "hover:bg-white/30 backdrop-blur-xs" : ""}`}>
+              <p className={`font-['Alex_Brush',cursive] text-[48px] sm:text-[60px] lg:text-[68px] text-[#3a2a2a] select-none leading-none drop-shadow-sm transition-colors ${!isReceiver ? "group-hover:text-pink-900" : ""}`}>
+                {isReceiver
+                  ? (project.headerTitle && project.headerTitle.trim() && project.headerTitle.trim().toLowerCase() !== "write your wish"
+                      ? project.headerTitle.trim()
+                      : (name ? `A Celebration for ${name}` : "A Celebration for You"))
+                  : (project.headerTitle?.trim() || "Write Your Wish")}
               </p>
               {!isReceiver && (
                 <Edit3
@@ -1351,6 +1412,7 @@ export default function WishPage() {
               key={sticker.id}
               sticker={{ ...sticker, src: effectiveSrc }}
               onClick={() => handleStickerClick(sticker.id)}
+              isReceiver={isReceiver}
             />
           );
         })}
@@ -1438,6 +1500,9 @@ export default function WishPage() {
       <GuideTourModal
         isOpen={isGuideOpen}
         onClose={handleCloseGuide}
+        onAction={handleStickerClick}
+        isReceiver={isReceiver}
+        recipientName={name}
       />
 
       {/* Seal & Share Gift Modal (Receiver & Private Draft Links) */}

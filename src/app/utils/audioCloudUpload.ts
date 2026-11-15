@@ -10,7 +10,7 @@ async function uploadToTmpFiles(file: File | Blob, fileName: string): Promise<st
   const formData = new FormData();
   formData.append("file", file, fileName);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 5000);
 
   try {
     const res = await fetch("https://tmpfiles.org/api/v1/upload", {
@@ -36,7 +36,7 @@ async function uploadToCatbox(file: File | Blob, fileName: string): Promise<stri
   formData.append("reqtype", "fileupload");
   formData.append("fileToUpload", file, fileName);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 16000);
+  const timer = setTimeout(() => controller.abort(), 5000);
 
   try {
     const res = await fetch("https://catbox.moe/user/api.php", {
@@ -62,7 +62,7 @@ async function uploadToLitterbox(file: File | Blob, fileName: string): Promise<s
   formData.append("time", "72h");
   formData.append("fileToUpload", file, fileName);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 5000);
 
   try {
     const res = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", {
@@ -86,7 +86,7 @@ async function uploadToFilebin(file: File | Blob, fileName: string): Promise<str
   const binId = "wish-" + Math.random().toString(36).substring(2, 10);
   const cleanName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 5000);
 
   try {
     const res = await fetch(`https://filebin.net/${binId}/${cleanName}`, {
@@ -108,16 +108,24 @@ async function uploadToFilebin(file: File | Blob, fileName: string): Promise<str
  * Upload an audio file with automatic multi-provider fallback.
  */
 export async function uploadAudioToCloud(file: File | Blob, originalName?: string): Promise<string> {
+  let defaultExt = ".mp3";
+  if (file.type) {
+    if (file.type.includes("webm")) defaultExt = ".webm";
+    else if (file.type.includes("mp4") || file.type.includes("m4a")) defaultExt = ".m4a";
+    else if (file.type.includes("ogg")) defaultExt = ".ogg";
+    else if (file.type.includes("wav")) defaultExt = ".wav";
+  }
+
   const fileName =
     originalName ||
-    (file instanceof File ? file.name : "custom-birthday-song.mp3");
+    (file instanceof File ? file.name : `voice-memo-${Date.now()}${defaultExt}`);
 
   const providers: { name: string; fn: () => Promise<string> }[] = [];
 
   if (isSupabaseConfigured()) {
     providers.push({
       name: "supabase-storage",
-      fn: () => uploadToSupabaseStorage(file, "wish-media", fileName),
+      fn: () => uploadToSupabaseStorage(file, "wish-photos", fileName),
     });
   }
 

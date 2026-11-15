@@ -36,6 +36,10 @@ import {
   isVideoMedia,
 } from "../utils/audioUtils";
 import {
+  saveAudioBlob,
+  resolveAudioPlaybackUrl,
+} from "../utils/audioStorage";
+import {
   PutulKhelaStage,
   PUPPET_CATALOG,
   getPuppetForItem,
@@ -231,7 +235,17 @@ export function MailboxModal({
   const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState(false);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const puppetAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const puppetVoiceInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploadingPuppetAudio, setIsUploadingPuppetAudio] = useState(false);
+  const [newAudioBase64, setNewAudioBase64] = useState<string | null>(null);
+  const lastAudioStorageKeyRef = useRef<string | null>(null);
+
+  // Active Puppet Live Voice Recording
+  const [isRecordingPuppet, setIsRecordingPuppet] = useState(false);
+  const [puppetRecordSeconds, setPuppetRecordSeconds] = useState(0);
+  const puppetMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const puppetAudioChunksRef = useRef<Blob[]>([]);
+  const puppetRecordTimerRef = useRef<number | null>(null);
 
   // Soft toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -274,14 +288,26 @@ export function MailboxModal({
         : `🫧 Memory popped!`;
     showToast(toastText);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setPoppedTreasureIds((prev) => new Set([...prev, item.id]));
       setBurstingIds((prev) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;
       });
-      setActiveItem(item);
+
+      let resolvedItem = { ...item };
+      // Resolve any IndexedDB or cached local audio so it plays immediately
+      if (resolvedItem.audioUrl) {
+        const playableAudio = await resolveAudioPlaybackUrl(resolvedItem.audioUrl, `puppet_audio_${item.id}`);
+        if (playableAudio) resolvedItem.audioUrl = playableAudio;
+      }
+      if (resolvedItem.voiceUrl) {
+        const playableVoice = await resolveAudioPlaybackUrl(resolvedItem.voiceUrl, `voice_note_${item.id}`);
+        if (playableVoice) resolvedItem.voiceUrl = playableVoice;
+      }
+
+      setActiveItem(resolvedItem);
       setIsPlayingAudio(false);
       setIsEditingYtOnCard(false);
       setIsEditingPhotoOnCard(false);
@@ -362,21 +388,59 @@ export function MailboxModal({
     const file = e.target.files?.[0];
     if (!file || !activeItem) return;
     setIsUploadingPuppetAudio(true);
-    try {
-      const localBlobUrl = URL.createObjectURL(file);
-      const fileName = file.name.replace(/\.[^/.]+$/, "");
 
-      // Immediately set local blob URL so sender can listen while upload runs
+    try {
+      const fileName = file.name.replace(/\.[^/.]+$/, "");
+      const storageKey = `puppet_audio_${activeItem.id || activeItem.puppetId || Date.now()}`;
+
+      // 1. Immediately cache in IndexedDB for permanent local persistence
+      await saveAudioBlob(storageKey, file);
+
+      // 2. Play immediately for zero-lag instant audio feedback
+      const localPlaybackUrl = URL.createObjectURL(file);
+
+      let base64Fallback: string | null = null;
+      if (file.size <= 300 * 1024) {
+        try {
+          base64Fallback = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(reader.error);
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+        } catch {}
+      }
+
       const tempItem: MailboxBubbleItem = {
         ...activeItem,
         songSource: "audio",
-        audioUrl: localBlobUrl,
+        audioUrl: base64Fallback || `idb:${storageKey}`,
         youtubeUrl: undefined,
         youtubeId: undefined,
         artist: fileName,
       };
-      setActiveItem(tempItem);
-      showToast("Uploading audio to cloud...");
+
+      // Set active item with playable local URL so the sender hears it right away
+      setActiveItem({
+        ...tempItem,
+        audioUrl: localPlaybackUrl,
+      });
+
+      updateItems((prevItems) => {
+        const exists = prevItems.some(
+          (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+        );
+        return exists
+          ? prevItems.map((i) =>
+              i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                ? tempItem
+                : i
+            )
+          : [...prevItems, tempItem];
+      });
+
+      showToast("Audio saved! 🎵✨");
+      setIsUploadingPuppetAudio(false);
 
       // Auto-play for sender immediately
       setTimeout(() => {
@@ -386,54 +450,285 @@ export function MailboxModal({
           media.play().catch(() => {});
           setIsPlayingAudio(true);
         }
-      }, 150);
+      }, 100);
 
-      // Upload to cloud (Supabase -> public fallbacks)
-      let savedUrl: string = localBlobUrl;
-      try {
-        const result = await uploadGiftFile(file);
-        if (result && result.startsWith("http")) {
-          savedUrl = result;
-          showToast("Audio saved to cloud! Receiver can hear it too");
-        } else {
-          throw new Error("No valid cloud URL returned");
+      // 3. Upload to Supabase cloud storage in background
+      (async () => {
+        try {
+          const cloudUrl = await uploadGiftFile(file);
+          if (cloudUrl && cloudUrl.startsWith("http")) {
+            const cloudItem: MailboxBubbleItem = {
+              ...tempItem,
+              audioUrl: cloudUrl,
+            };
+            setActiveItem((curr) =>
+              curr && (curr.id === activeItem.id || (activeItem.puppetId && curr.puppetId === activeItem.puppetId))
+                ? { ...cloudItem, audioUrl: cloudUrl }
+                : curr
+            );
+            updateItems((prevItems) =>
+              prevItems.map((i) =>
+                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                  ? cloudItem
+                  : i
+              )
+            );
+            showToast("🎉 Audio synced to cloud! Receiver can hear it too ✨");
+            console.log("[Puppet Audio] Audio synced to Supabase:", cloudUrl);
+          }
+        } catch (uploadErr) {
+          console.warn("[Puppet Audio] Background audio cloud upload deferred/failed:", uploadErr);
         }
-      } catch (err) {
-        console.warn("[Puppet Audio] Cloud upload failed, using base64 fallback:", err);
-        // Base64 fallback for small files
-        if (file.size <= 10 * 1024 * 1024) {
-          savedUrl = await new Promise<string>((resolve, reject) => {
+      })();
+    } catch (err) {
+      console.error("[Puppet Audio] Unexpected error:", err);
+      showToast("Could not process this audio file. Please try another MP3 or audio format.");
+    } finally {
+      setIsUploadingPuppetAudio(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  // Live Microphone Voice Recording on Active Revealed Puppet Card
+  const startPuppetRecording = async () => {
+    if (!activeItem) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let mimeType = "audio/webm";
+      if (typeof MediaRecorder !== "undefined") {
+        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+          mimeType = "audio/webm;codecs=opus";
+        } else if (MediaRecorder.isTypeSupported("audio/webm")) {
+          mimeType = "audio/webm";
+        } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+          mimeType = "audio/mp4";
+        } else if (MediaRecorder.isTypeSupported("audio/aac")) {
+          mimeType = "audio/aac";
+        }
+      }
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      puppetMediaRecorderRef.current = mediaRecorder;
+      puppetAudioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) puppetAudioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(puppetAudioChunksRef.current, {
+          type: mediaRecorder.mimeType || mimeType || "audio/webm",
+        });
+        stream.getTracks().forEach((track) => track.stop());
+
+        const isVoiceType = activeItem.type === "voice" || activeItem.puppetId === "moonboy";
+        const recordedSec = puppetRecordSeconds || Math.max(1, Math.round(audioBlob.size / 32000));
+        const storageKey = isVoiceType
+          ? `voice_note_${activeItem.id || activeItem.puppetId || Date.now()}`
+          : `puppet_audio_${activeItem.id || activeItem.puppetId || Date.now()}`;
+
+        // 1. Immediately cache in IndexedDB
+        await saveAudioBlob(storageKey, audioBlob);
+
+        // 2. Playable preview for sender immediately
+        const localBlobUrl = URL.createObjectURL(audioBlob);
+
+        let base64Fallback: string | null = null;
+        if (audioBlob.size <= 300 * 1024) {
+          try {
+            base64Fallback = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onerror = () => reject(reader.error);
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(audioBlob);
+            });
+          } catch {}
+        }
+
+        const tempItem: MailboxBubbleItem = {
+          ...activeItem,
+          type: isVoiceType ? "voice" : activeItem.type,
+          voiceUrl: isVoiceType ? (base64Fallback || `idb:${storageKey}`) : activeItem.voiceUrl,
+          voiceDuration: isVoiceType ? recordedSec : activeItem.voiceDuration,
+          audioUrl: base64Fallback || `idb:${storageKey}`,
+          songSource: isVoiceType ? undefined : "audio",
+          artist: isVoiceType ? "Personal Voice Whisper" : "Recorded Voice Dedication 🎙️",
+        };
+
+        setActiveItem({
+          ...tempItem,
+          voiceUrl: isVoiceType ? localBlobUrl : tempItem.voiceUrl,
+          audioUrl: localBlobUrl,
+        });
+
+        updateItems((prevItems) => {
+          const exists = prevItems.some(
+            (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+          );
+          return exists
+            ? prevItems.map((i) =>
+                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                  ? tempItem
+                  : i
+              )
+            : [...prevItems, tempItem];
+        });
+
+        showToast("Voice recorded! 🎙️✨");
+
+        // Auto-play for sender immediately
+        setTimeout(() => {
+          const media = getActiveMedia();
+          if (media) {
+            media.load();
+            media.play().catch(() => {});
+            setIsPlayingAudio(true);
+          }
+        }, 100);
+
+        // 3. Upload to Supabase cloud storage in background
+        (async () => {
+          try {
+            const cloudUrl = await uploadGiftFile(audioBlob, audioBlob.type);
+            if (cloudUrl && cloudUrl.startsWith("http")) {
+              const cloudItem: MailboxBubbleItem = {
+                ...tempItem,
+                voiceUrl: isVoiceType ? cloudUrl : tempItem.voiceUrl,
+                audioUrl: cloudUrl,
+              };
+              setActiveItem((curr) =>
+                curr && (curr.id === activeItem.id || (activeItem.puppetId && curr.puppetId === activeItem.puppetId))
+                  ? { ...cloudItem, voiceUrl: isVoiceType ? cloudUrl : curr.voiceUrl, audioUrl: cloudUrl }
+                  : curr
+              );
+              updateItems((prevItems) =>
+                prevItems.map((i) =>
+                  i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                    ? cloudItem
+                    : i
+                )
+              );
+              showToast("🎉 Voice note synced to cloud! Receiver can hear it ✨");
+            }
+          } catch (uploadErr) {
+            console.warn("[Puppet Voice] Background upload deferred/failed:", uploadErr);
+          }
+        })();
+      };
+
+      mediaRecorder.start();
+      setIsRecordingPuppet(true);
+      setPuppetRecordSeconds(0);
+      puppetRecordTimerRef.current = window.setInterval(() => {
+        setPuppetRecordSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      showToast("⚠️ Microphone access is needed to record a voice note.");
+    }
+  };
+
+  const stopPuppetRecording = () => {
+    if (puppetMediaRecorderRef.current && isRecordingPuppet) {
+      puppetMediaRecorderRef.current.stop();
+      setIsRecordingPuppet(false);
+      if (puppetRecordTimerRef.current) {
+        clearInterval(puppetRecordTimerRef.current);
+        puppetRecordTimerRef.current = null;
+      }
+    }
+  };
+
+  // Handle direct voice audio file upload on Moonbeam Boy card
+  const handlePuppetVoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeItem) return;
+    setIsUploadingPuppetAudio(true);
+    try {
+      const storageKey = `voice_note_${activeItem.id || activeItem.puppetId || Date.now()}`;
+      await saveAudioBlob(storageKey, file);
+      const localBlobUrl = URL.createObjectURL(file);
+
+      let base64Fallback: string | null = null;
+      if (file.size <= 300 * 1024) {
+        try {
+          base64Fallback = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onerror = () => reject(reader.error);
             reader.onload = () => resolve(reader.result as string);
             reader.readAsDataURL(file);
           });
-          showToast("Audio saved locally. Set up Supabase bucket so receiver can hear it.");
-        } else {
-          showToast("Cloud upload failed. Audio plays now but receiver may not hear it.");
-        }
+        } catch {}
       }
 
-      const finalItem: MailboxBubbleItem = {
-        ...tempItem,
-        audioUrl: savedUrl,
+      const tempItem: MailboxBubbleItem = {
+        ...activeItem,
+        type: "voice",
+        voiceUrl: base64Fallback || `idb:${storageKey}`,
+        voiceDuration: 12,
+        audioUrl: base64Fallback || `idb:${storageKey}`,
+        artist: "Personal Voice Whisper",
       };
-      setActiveItem(finalItem);
 
-      const exists = items.some(
-        (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
-      );
-      const updated = exists
-        ? items.map((i) =>
-            i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
-              ? finalItem
-              : i
-          )
-        : [...items, finalItem];
-      updateItems(updated);
-    } catch (err) {
-      console.error("[Puppet Audio] Unexpected error:", err);
-      showToast("Could not process this audio file. Please try another MP3 or audio format.");
+      setActiveItem({
+        ...tempItem,
+        voiceUrl: localBlobUrl,
+        audioUrl: localBlobUrl,
+      });
+
+      updateItems((prevItems) => {
+        const exists = prevItems.some(
+          (i) => i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+        );
+        return exists
+          ? prevItems.map((i) =>
+              i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                ? tempItem
+                : i
+            )
+          : [...prevItems, tempItem];
+      });
+
+      showToast("Voice memo attached! 🎙️✨");
+
+      // Auto-play for sender immediately
+      setTimeout(() => {
+        const media = getActiveMedia();
+        if (media) {
+          media.load();
+          media.play().catch(() => {});
+          setIsPlayingAudio(true);
+        }
+      }, 100);
+
+      // Upload to Supabase cloud storage in background
+      (async () => {
+        try {
+          const cloudUrl = await uploadGiftFile(file);
+          if (cloudUrl && cloudUrl.startsWith("http")) {
+            const cloudItem: MailboxBubbleItem = {
+              ...tempItem,
+              voiceUrl: cloudUrl,
+              audioUrl: cloudUrl,
+            };
+            setActiveItem((curr) =>
+              curr && (curr.id === activeItem.id || (activeItem.puppetId && curr.puppetId === activeItem.puppetId))
+                ? { ...cloudItem, voiceUrl: cloudUrl, audioUrl: cloudUrl }
+                : curr
+            );
+            updateItems((prevItems) =>
+              prevItems.map((i) =>
+                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                  ? cloudItem
+                  : i
+              )
+            );
+            showToast("🎉 Voice note synced to cloud! Receiver can hear it ✨");
+          }
+        } catch (uploadErr) {
+          console.warn("[Voice Upload Sync]", uploadErr);
+        }
+      })();
+    } catch {
+      showToast("Could not process this audio file. Please choose another voice memo.");
     } finally {
       setIsUploadingPuppetAudio(false);
       if (e.target) e.target.value = "";
@@ -454,12 +749,12 @@ export function MailboxModal({
       };
       setActiveItem(tempItem);
 
-      // 2. Upload to public cloud image storage
+      // 2. Upload to Supabase cloud storage (same Edge Function as Scrapbook)
       let finalUrl = "";
       try {
-        finalUrl = await uploadImageToCloud(file);
+        finalUrl = await uploadGiftFile(file);
       } catch (cloudErr) {
-        console.warn("Cloud image upload fallback to local compression:", cloudErr);
+        console.warn("Cloud photo upload fallback to local compression:", cloudErr);
         finalUrl = await imageFileToDataUrl(file);
       }
 
@@ -486,7 +781,7 @@ export function MailboxModal({
           : "📸 Photo saved! (Set up Supabase bucket so receiver can view it)"
       );
     } catch (err) {
-      alert("Could not process this photo. Please choose another image.");
+      showToast("Could not process this photo. Please choose another image.");
     } finally {
       setIsUploadingCardPhoto(false);
       if (e.target) e.target.value = "";
@@ -501,7 +796,7 @@ export function MailboxModal({
     try {
       const localPreview = URL.createObjectURL(file);
       setEditCardPhotoUrl(localPreview);
-      const cloudUrl = await uploadImageToCloud(file);
+      const cloudUrl = await uploadGiftFile(file);
       setEditCardPhotoUrl(cloudUrl);
       showToast("Photo attached to memory! 📸✨");
     } catch (err) {
@@ -510,7 +805,7 @@ export function MailboxModal({
         setEditCardPhotoUrl(compressed);
         showToast("Photo attached! 📸");
       } catch {
-        alert("Could not process this image.");
+        showToast("Could not process this image.");
       }
     } finally {
       setIsUploadingEditPhoto(false);
@@ -632,7 +927,19 @@ export function MailboxModal({
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      let mimeType = "audio/webm";
+      if (typeof MediaRecorder !== "undefined") {
+        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+          mimeType = "audio/webm;codecs=opus";
+        } else if (MediaRecorder.isTypeSupported("audio/webm")) {
+          mimeType = "audio/webm";
+        } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+          mimeType = "audio/mp4";
+        } else if (MediaRecorder.isTypeSupported("audio/aac")) {
+          mimeType = "audio/aac";
+        }
+      }
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -641,48 +948,48 @@ export function MailboxModal({
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorder.mimeType || mimeType || "audio/webm",
+        });
         stream.getTracks().forEach((track) => track.stop());
 
-        // Immediately give sender a local blob URL to preview right away
+        const storageKey = `voice_note_${Date.now()}`;
+        lastAudioStorageKeyRef.current = storageKey;
+        // 1. Immediately cache in IndexedDB
+        await saveAudioBlob(storageKey, audioBlob);
+
+        // 2. Playable preview for sender immediately
         const localBlobUrl = URL.createObjectURL(audioBlob);
-        setNewAudioUrl(localBlobUrl);
-        setVoiceUploadStatus("uploading");
-        setIsUploadingVoice(true);
 
+        let base64Url = "";
         try {
-          // Try cloud upload (Supabase then public fallbacks)
-          let cloudUrl: string | null = null;
-          try {
-            const result = await uploadGiftFile(audioBlob, "audio/webm");
-            // Only accept real HTTPS URLs, not data: URLs returned as last-resort fallback
-            if (result && result.startsWith("http")) cloudUrl = result;
-          } catch (err) {
-            console.warn("[Voice Upload] Cloud upload failed:", err);
-          }
+          base64Url = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(reader.error);
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(audioBlob);
+          });
+        } catch {}
 
-          if (cloudUrl) {
-            setNewAudioUrl(cloudUrl);
-            setVoiceUploadStatus("done");
-            showToast("Voice note saved to cloud! Works after refresh and for receiver too");
-          } else {
-            // Encode as base64 data URL as fallback - survives localStorage if blob is small
-            const dataUrl = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onerror = () => reject(reader.error);
-              reader.onload = () => resolve(reader.result as string);
-              reader.readAsDataURL(audioBlob);
-            });
-            setNewAudioUrl(dataUrl);
-            setVoiceUploadStatus("local");
-            showToast("Voice note saved locally. Set up Supabase bucket so receiver can hear it too.");
+        if (base64Url) setNewAudioBase64(base64Url);
+        setNewAudioUrl(base64Url || localBlobUrl);
+        setVoiceUploadStatus("done");
+        setIsUploadingVoice(false);
+        showToast("Voice note recorded! 🎙️✨");
+
+        // 3. Upload to Supabase cloud storage in background
+        (async () => {
+          try {
+            const cloudUrl = await uploadGiftFile(audioBlob, audioBlob.type);
+            if (cloudUrl && cloudUrl.startsWith("http")) {
+              setNewAudioUrl(cloudUrl);
+              showToast("🎉 Voice note synced to cloud! Receiver can hear it ✨");
+              console.log("[Voice Note] Synced to Supabase:", cloudUrl);
+            }
+          } catch (uploadErr) {
+            console.warn("[Voice Note] Background cloud upload deferred/failed:", uploadErr);
           }
-        } catch (err) {
-          console.error("[Voice Upload] Unexpected error:", err);
-          setVoiceUploadStatus("local");
-        } finally {
-          setIsUploadingVoice(false);
-        }
+        })();
       };
 
       mediaRecorder.start();
@@ -692,7 +999,7 @@ export function MailboxModal({
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch {
-      alert("Microphone access is needed to record a voice note.");
+      showToast("⚠️ Microphone access is needed to record a voice note.");
     }
   };
 
@@ -711,48 +1018,47 @@ export function MailboxModal({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Immediately give local blob URL for instant preview
+    const storageKey = `voice_audio_${Date.now()}`;
+    lastAudioStorageKeyRef.current = storageKey;
+    // 1. Immediately cache in IndexedDB
+    await saveAudioBlob(storageKey, file);
+
+    // 2. Playable preview for sender immediately
     const localBlobUrl = URL.createObjectURL(file);
-    setNewAudioUrl(localBlobUrl);
-    setVoiceUploadStatus("uploading");
-    setIsUploadingVoice(true);
 
-    try {
-      // Try cloud upload (Supabase -> public fallbacks)
-      let cloudUrl: string | null = null;
+    let base64Url: string | null = null;
+    if (file.size <= 300 * 1024) {
       try {
-        const result = await uploadGiftFile(file);
-        if (result && result.startsWith("http")) cloudUrl = result;
-      } catch (err) {
-        console.warn("[Audio Upload] Cloud upload failed:", err);
-      }
-
-      if (cloudUrl) {
-        setNewAudioUrl(cloudUrl);
-        setVoiceUploadStatus("done");
-        showToast("Audio saved to cloud! Works after refresh and for receiver too");
-      } else if (file.size <= 10 * 1024 * 1024) {
-        // Base64 fallback for files up to 10MB
-        const dataUrl = await new Promise<string>((resolve, reject) => {
+        base64Url = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onerror = () => reject(reader.error);
           reader.onload = () => resolve(reader.result as string);
           reader.readAsDataURL(file);
         });
-        setNewAudioUrl(dataUrl);
-        setVoiceUploadStatus("local");
-        showToast("Audio saved locally. Set up Supabase bucket so receiver can hear it too.");
-      } else {
-        setVoiceUploadStatus("local");
-        showToast("Cloud upload failed. Audio plays now but receiver may not hear it. Try a song link.");
-      }
-    } catch (err) {
-      console.error("[Audio Upload] Error:", err);
-      setVoiceUploadStatus("local");
-    } finally {
-      setIsUploadingVoice(false);
-      if (e.target) e.target.value = "";
+      } catch {}
     }
+
+    if (base64Url) setNewAudioBase64(base64Url);
+    setNewAudioUrl(base64Url || localBlobUrl);
+    setVoiceUploadStatus("done");
+    setIsUploadingVoice(false);
+    showToast("Audio selected! 🎵✨");
+
+    // 3. Upload to Supabase in background
+    (async () => {
+      try {
+        const cloudUrl = await uploadGiftFile(file);
+        if (cloudUrl && cloudUrl.startsWith("http")) {
+          setNewAudioUrl(cloudUrl);
+          showToast("🎉 Audio synced to cloud! Receiver can hear it ✨");
+          console.log("[Audio Upload] Synced to Supabase:", cloudUrl);
+        }
+      } catch (uploadErr) {
+        console.warn("[Audio Upload] Background cloud upload deferred/failed:", uploadErr);
+      }
+    })();
+
+    if (e.target) e.target.value = "";
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -763,7 +1069,7 @@ export function MailboxModal({
       const localPreview = URL.createObjectURL(file);
       setNewPhotoUrl(localPreview);
       try {
-        const cloudUrl = await uploadImageToCloud(file);
+        const cloudUrl = await uploadGiftFile(file);
         if (cloudUrl) setNewPhotoUrl(cloudUrl);
       } catch (uploadErr) {
         console.warn("Cloud photo upload deferred, stored locally", uploadErr);
@@ -771,7 +1077,7 @@ export function MailboxModal({
         setNewPhotoUrl(compressed);
       }
     } catch {
-      alert("Could not process this image. Please choose another photo.");
+      showToast("Could not process this image. Please choose another photo.");
     } finally {
       setIsUploadingPhoto(false);
       if (e.target) e.target.value = "";
@@ -781,6 +1087,8 @@ export function MailboxModal({
   const handleTabChange = (type: MailboxBubbleType) => {
     setAddTab(type);
     setNewAudioUrl(null);
+    setNewAudioBase64(null);
+    lastAudioStorageKeyRef.current = null;
     setVoiceUploadStatus("idle");
     setIsUploadingVoice(false);
     if (type === "song") setNewPuppetId("musician");
@@ -802,6 +1110,13 @@ export function MailboxModal({
       const sunoAudio = await resolveSunoAudioUrl(input);
       const isSuno = isSunoUrl(input);
 
+      const persistentAudio =
+        sunoAudio ||
+        (newAudioUrl?.startsWith("http") ? newAudioUrl : null) ||
+        newAudioBase64 ||
+        (lastAudioStorageKeyRef.current ? `idb:${lastAudioStorageKeyRef.current}` : newAudioUrl) ||
+        undefined;
+
       newItem = {
         id: `bubble-${Date.now()}`,
         type: "song",
@@ -813,7 +1128,7 @@ export function MailboxModal({
         youtubeUrl: ytId ? input : undefined,
         youtubeId: ytId || undefined,
         sunoUrl: isSuno ? input : undefined,
-        audioUrl: sunoAudio || newAudioUrl || undefined,
+        audioUrl: persistentAudio,
         artist: newArtist.trim() || (isSuno ? "Created with Suno AI 🎵" : ytId ? "YouTube Dedication" : "Special Dedication"),
         hasPaper: newHasPaper,
         puppetId: newPuppetId,
@@ -821,6 +1136,12 @@ export function MailboxModal({
         color: "#fcf6e9",
       };
     } else if (addTab === "voice") {
+      const persistentVoice =
+        (newAudioUrl?.startsWith("http") ? newAudioUrl : null) ||
+        newAudioBase64 ||
+        (lastAudioStorageKeyRef.current ? `idb:${lastAudioStorageKeyRef.current}` : newAudioUrl) ||
+        undefined;
+
       newItem = {
         id: `bubble-${Date.now()}`,
         type: "voice",
@@ -828,7 +1149,7 @@ export function MailboxModal({
         sender: newSender.trim() || "From My Heart",
         date: "Voice Note",
         message: newMessage.trim(),
-        voiceUrl: newAudioUrl || undefined,
+        voiceUrl: persistentVoice,
         voiceDuration: recordingSeconds || 8,
         hasPaper: newHasPaper,
         puppetId: newPuppetId,
@@ -885,6 +1206,8 @@ export function MailboxModal({
     setNewYoutubeUrl("");
     setNewArtist("");
     setNewAudioUrl(null);
+    setNewAudioBase64(null);
+    lastAudioStorageKeyRef.current = null;
     setNewPhotoUrl(null);
     setNewPhotoCaption("");
     setVoiceUploadStatus("idle");
@@ -1635,26 +1958,39 @@ export function MailboxModal({
                           </div>
                         )}
 
-                        {/* 3. VOICE NOTE */}
+                        {/* 3. VOICE NOTE (চাঁদের পুতুল / Moonbeam Boy) */}
                         {activeItem.type === "voice" && (
-                          <div className="flex flex-col items-center justify-center gap-2">
-                            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-amber-700 text-amber-100 flex items-center justify-center shadow-lg border border-amber-300/50 mb-0.5">
-                              <Mic size={22} className="animate-pulse" />
+                          <div className="flex flex-col items-center justify-center gap-2.5 w-full">
+                            {/* Glowing Puppet Icon Badge */}
+                            <div className="w-13 h-13 rounded-full bg-gradient-to-tr from-amber-400 via-amber-600 to-amber-800 text-amber-100 flex items-center justify-center shadow-[0_4px_25px_rgba(245,158,11,0.5)] border-2 border-amber-300/70 mb-0.5">
+                              <Mic size={24} className={isRecordingPuppet ? "text-rose-300 animate-ping" : "animate-pulse"} />
                             </div>
-                            <p className="font-serif text-[11px] text-amber-200 font-bold uppercase tracking-wider">
-                              Personal Voice Whisper (~{activeItem.voiceDuration || 8}s)
-                            </p>
 
-                            {activeItem.voiceUrl ? (
-                              <div className="flex flex-col items-center gap-1.5 w-full">
+                            <div className="flex items-center gap-1.5 text-[11px] font-serif text-amber-200">
+                              <span className="font-bold tracking-wider uppercase">
+                                Personal Voice Whisper
+                              </span>
+                              {activeItem.voiceDuration ? (
+                                <span className="text-amber-400 font-semibold">• ~{activeItem.voiceDuration}s</span>
+                              ) : null}
+                              <span>•</span>
+                              <span className="text-emerald-400 font-medium">Plays in site with 0 redirect ✨</span>
+                            </div>
+
+                            {/* Voice Player & Controls */}
+                            {Boolean(activeItem.voiceUrl || activeItem.audioUrl) ? (
+                              <div className="flex flex-col items-center gap-2 w-full mt-1">
                                 <audio
                                   ref={audioPlayerRef}
-                                  src={activeItem.voiceUrl}
+                                  src={activeItem.voiceUrl || activeItem.audioUrl}
                                   onPlay={() => setIsPlayingAudio(true)}
                                   onPause={() => setIsPlayingAudio(false)}
                                   onEnded={() => setIsPlayingAudio(false)}
                                 />
+
+                                {/* Primary Play / Pause Button */}
                                 <button
+                                  type="button"
                                   onClick={() => {
                                     if (!audioPlayerRef.current) return;
                                     if (isPlayingAudio) {
@@ -1665,23 +2001,150 @@ export function MailboxModal({
                                       setIsPlayingAudio(true);
                                     }
                                   }}
-                                  className="flex items-center gap-1.5 px-5 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-700 text-amber-100 font-serif font-bold text-xs shadow-md border border-amber-300/40 cursor-pointer"
+                                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-amber-950 font-serif font-bold text-xs sm:text-sm shadow-[0_4px_20px_rgba(245,158,11,0.4)] border border-amber-300/80 cursor-pointer transition-all hover:scale-105 active:scale-95"
                                 >
-                                  {isPlayingAudio ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-                                  <span>{isPlayingAudio ? "Pause Recording" : "Listen to Voice Note"}</span>
+                                  {isPlayingAudio ? (
+                                    <Pause size={15} fill="currentColor" />
+                                  ) : (
+                                    <Play size={15} fill="currentColor" />
+                                  )}
+                                  <span>{isPlayingAudio ? "Pause Voice Whisper" : "Listen to Voice Whisper 🎙️"}</span>
+                                </button>
+
+                                {/* Sender Live Re-Record & Upload Options */}
+                                {!isReceiver && (
+                                  <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-amber-400/25">
+                                    <button
+                                      type="button"
+                                      onClick={isRecordingPuppet ? stopPuppetRecording : startPuppetRecording}
+                                      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10.5px] font-serif font-semibold cursor-pointer border transition-all ${
+                                        isRecordingPuppet
+                                          ? "bg-rose-500/30 border-rose-400 text-rose-200 animate-pulse font-bold"
+                                          : "bg-white/10 hover:bg-white/20 border-amber-400/30 text-amber-200 hover:text-amber-100"
+                                      }`}
+                                    >
+                                      <Mic size={12} className={isRecordingPuppet ? "text-rose-400 animate-bounce" : ""} />
+                                      <span>
+                                        {isRecordingPuppet
+                                          ? `Recording... 0:${puppetRecordSeconds.toString().padStart(2, "0")} (Tap to Stop ⏹️)`
+                                          : "Record Again 🎙️"}
+                                      </span>
+                                    </button>
+                                    <span className="text-amber-400/30">•</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => puppetVoiceInputRef.current?.click()}
+                                      disabled={isUploadingPuppetAudio}
+                                      className="flex items-center gap-1 text-[10.5px] font-serif font-semibold text-amber-300/80 hover:text-amber-200 cursor-pointer disabled:opacity-50"
+                                    >
+                                      <Upload size={12} />
+                                      <span>{isUploadingPuppetAudio ? "Uploading... ⏳" : "Upload Voice File"}</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : isRecordingPuppet ? (
+                              /* Live Recording Interface while actively speaking */
+                              <div className="flex flex-col items-center gap-3 p-4 rounded-2xl bg-rose-950/70 border-2 border-rose-500/80 shadow-[0_0_30px_rgba(244,63,94,0.35)] w-full max-w-xs animate-pulse">
+                                <div className="flex items-center gap-2 text-rose-200 font-serif font-bold text-xs">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                                  <span>Recording Voice: 0:{puppetRecordSeconds.toString().padStart(2, "0")}</span>
+                                </div>
+                                <div className="flex items-center gap-1 h-5">
+                                  {[40, 75, 100, 60, 90, 50, 80, 100, 70, 45].map((h, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="w-1 bg-rose-400 rounded-full animate-bounce"
+                                      style={{
+                                        height: `${h}%`,
+                                        animationDelay: `${idx * 0.08}s`,
+                                        animationDuration: "0.6s",
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={stopPuppetRecording}
+                                  className="flex items-center gap-2 px-5 py-2 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-serif font-bold text-xs shadow-lg cursor-pointer transition-all hover:scale-105 active:scale-95"
+                                >
+                                  <span className="w-2.5 h-2.5 rounded-xs bg-white" />
+                                  <span>Stop & Save Recording ⏹️</span>
                                 </button>
                               </div>
                             ) : (
-                              <p className="font-serif italic text-xs text-amber-200/80 px-2">
-                                "A little personal voice note recorded just for you."
-                              </p>
+                              /* Initial Empty State (Prompt sender to record or upload) */
+                              <div className="flex flex-col items-center gap-2.5 p-3 rounded-2xl bg-black/40 border border-amber-400/30 shadow-inner w-full max-w-sm">
+                                <p className="font-serif italic text-xs text-amber-200/90 text-center">
+                                  Whisper a personal voice message for {name}. Record it live or upload a voice memo!
+                                </p>
+                                {!isReceiver ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={startPuppetRecording}
+                                      className="flex items-center gap-2 px-5 py-2 rounded-full bg-gradient-to-r from-rose-500 via-rose-600 to-amber-600 hover:from-rose-400 hover:to-amber-500 text-white font-serif font-bold text-xs shadow-lg border border-rose-300/60 cursor-pointer transition-all hover:scale-105 active:scale-95"
+                                    >
+                                      <Mic size={14} className="animate-pulse" />
+                                      <span>Record Voice Note 🎙️</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => puppetVoiceInputRef.current?.click()}
+                                      disabled={isUploadingPuppetAudio}
+                                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-200 font-serif font-semibold text-xs border border-amber-400/30 cursor-pointer transition-all disabled:opacity-50"
+                                    >
+                                      <Upload size={13} />
+                                      <span>Upload Audio</span>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p className="font-serif italic text-xs text-amber-200/80 px-2 my-1">
+                                    "A little personal voice note recorded just for you."
+                                  </p>
+                                )}
+                              </div>
                             )}
 
-                            {activeItem.message && (
-                              <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 mt-1">
-                                "{activeItem.message}"
-                              </p>
-                            )}
+                            {/* Hidden File Input for Voice Audio Upload */}
+                            <input
+                              ref={puppetVoiceInputRef}
+                              type="file"
+                              accept="audio/*"
+                              onChange={handlePuppetVoiceUpload}
+                              className="hidden"
+                            />
+
+                            {/* Message / Caption */}
+                            <div
+                              onClick={() => {
+                                if (isReceiver) return;
+                                setEditCardTitle(activeItem.title || "");
+                                setEditCardSender(activeItem.sender && activeItem.sender !== "Your Special Person" ? activeItem.sender : "");
+                                setEditCardMessage(activeItem.message || "");
+                                setEditCardEmoji(activeItem.stampEmoji || "🎙️");
+                                setIsEditingCardMessage(true);
+                              }}
+                              className={!isReceiver ? "cursor-pointer group relative mt-1" : "mt-1"}
+                              title={!isReceiver ? "Click to edit message" : undefined}
+                            >
+                              {activeItem.message ? (
+                                <p className="font-['Caveat',cursive] text-base sm:text-lg text-amber-100/90 leading-snug px-1 text-center">
+                                  "{activeItem.message}"
+                                  {!isReceiver && (
+                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-[10px] text-amber-300/80">
+                                      ✎
+                                    </span>
+                                  )}
+                                </p>
+                              ) : (
+                                !isReceiver && (
+                                  <p className="font-serif italic text-[11px] text-amber-300/70 hover:underline">
+                                    (Tap to write a dedicated message)
+                                  </p>
+                                )
+                              )}
+                            </div>
                           </div>
                         )}
 

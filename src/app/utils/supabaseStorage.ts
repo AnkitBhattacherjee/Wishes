@@ -22,14 +22,49 @@ export function isSupabaseConfigured(): boolean {
   return true;
 }
 
+let cachedBuckets: string[] | null = null;
+let lastBucketCheck = 0;
+
+/**
+ * Fetch available storage buckets from the user's Supabase project.
+ * Uses 30-second in-memory cache to keep requests fast and prevent redundant calls.
+ */
+export async function getAvailableBuckets(): Promise<string[]> {
+  if (!isSupabaseConfigured()) return [];
+  if (cachedBuckets && Date.now() - lastBucketCheck < 30000) {
+    return cachedBuckets;
+  }
+  try {
+    const baseUrl = getSupabaseBaseUrl();
+    const res = await fetch(`${baseUrl}/storage/v1/bucket`, {
+      method: "GET",
+      headers: {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        cachedBuckets = data.map((b: any) => b.name || b.id).filter(Boolean);
+        lastBucketCheck = Date.now();
+        return cachedBuckets;
+      }
+    }
+  } catch (e) {
+    console.warn("[Supabase Storage] Could not query bucket list:", e);
+  }
+  return [];
+}
+
 /**
  * Upload any File or Blob directly to Supabase Storage via standard REST API.
- * Uses a unique timestamped filename so uploads are always INSERTS and never
+ * Uses a unique timestamped filename so uploads are always unique INSERTS and never
  * conflict with existing files or require UPDATE RLS policies.
  */
 export async function uploadToSupabaseStorage(
   file: File | Blob,
-  preferredBucket = "wish-media",
+  preferredBucket = "wish-photos",
   customFileName?: string
 ): Promise<string> {
   if (!isSupabaseConfigured()) {
@@ -65,17 +100,22 @@ export async function uploadToSupabaseStorage(
   const filePath = `${prefix}_${uniqueId}.${cleanExt}`;
   const baseUrl = getSupabaseBaseUrl();
 
-  const candidateBuckets = Array.from(
-    new Set([
-      preferredBucket,
-      "wish-media",
-      "wish-photos",
-      "photos",
-      "images",
-      "media",
-      "public",
-    ])
-  );
+  // Dynamically check buckets that actually exist in the user's project
+  const existingBuckets = await getAvailableBuckets();
+
+  const candidateBuckets = existingBuckets.length > 0
+    ? existingBuckets
+    : Array.from(
+        new Set([
+          preferredBucket,
+          "wish-photos",
+          "wish-media",
+          "photos",
+          "images",
+          "media",
+          "public",
+        ])
+      );
 
   let lastError: Error | null = null;
 
@@ -104,23 +144,11 @@ export async function uploadToSupabaseStorage(
       const errorText = await res.text().catch(() => "");
       console.warn(`[Supabase Storage] ❌ [${bucketName}] HTTP ${res.status}: ${errorText}`);
 
-      // If bucket 404, try quick auto-creation in case anon key has permission
-      if (res.status === 404 || errorText.toLowerCase().includes("not found")) {
-        try {
-          await fetch(`${baseUrl}/storage/v1/bucket`, {
-            method: "POST",
-            headers: {
-              apikey: publicAnonKey,
-              Authorization: `Bearer ${publicAnonKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ id: bucketName, name: bucketName, public: true }),
-          });
-        } catch {}
-      }
-
       lastError = new Error(`Supabase [${bucketName}] upload returned ${res.status}: ${errorText}`);
-      continue;
+      if (res.status === 404 || errorText.toLowerCase().includes("not found")) {
+        continue;
+      }
+      break;
     } catch (err: any) {
       console.warn(`[Supabase Storage] ❌ Network error for [${bucketName}]:`, err?.message || err);
       lastError = err;

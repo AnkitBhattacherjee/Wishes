@@ -58,3 +58,32 @@ export async function getAudioObjectUrl(key: string): Promise<string | null> {
   if (!blob) return null;
   return URL.createObjectURL(blob);
 }
+
+/**
+ * Resolves an audio URL whether it is a remote HTTPS URL, a base64 data URL, an IndexedDB key (idb:key),
+ * or a dead blob URL that needs restoration from IndexedDB.
+ */
+export async function resolveAudioPlaybackUrl(url?: string | null, fallbackKey?: string): Promise<string | null> {
+  if (!url) {
+    if (fallbackKey) return getAudioObjectUrl(fallbackKey);
+    return null;
+  }
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
+    return url;
+  }
+  if (url.startsWith("idb:")) {
+    const key = url.replace("idb:", "");
+    const objUrl = await getAudioObjectUrl(key);
+    if (objUrl) return objUrl;
+    if (fallbackKey && fallbackKey !== key) {
+      return getAudioObjectUrl(fallbackKey);
+    }
+    return null;
+  }
+  if (url.startsWith("blob:") && fallbackKey) {
+    // Dead blob URL after page reload — restore fresh blob URL from IndexedDB
+    const objUrl = await getAudioObjectUrl(fallbackKey);
+    if (objUrl) return objUrl;
+  }
+  return url;
+}

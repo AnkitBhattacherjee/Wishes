@@ -14,11 +14,14 @@ import {
 import imgEnvelope from "../../imports/love_envelope.png";
 import imgMailbox from "../../imports/love_mailbox.png";
 import imgCake from "../../imports/birthday_cake.png";
+import imgPinkDiary from "../../imports/Desktop3-1/53d3640202fee41fc49435adadaf40ec5c1b091b.png";
 
 interface GuideTourModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAction?: (actionId: string) => void;
+  isReceiver?: boolean;
+  recipientName?: string;
 }
 
 interface TourStep {
@@ -30,9 +33,11 @@ interface TourStep {
   featureList: string[];
   imageSrc?: string;
   isIconStep?: boolean;
+  actionId?: string;
+  actionLabel?: string;
 }
 
-const TOUR_STEPS: TourStep[] = [
+const SENDER_TOUR_STEPS: TourStep[] = [
   {
     tag: "WELCOME TOUR",
     badgeEmoji: "✨",
@@ -105,8 +110,122 @@ const TOUR_STEPS: TourStep[] = [
   },
 ];
 
-export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProps) {
+function getReceiverTourSteps(name: string): TourStep[] {
+  const safeName = name?.trim() || "Friend";
+  return [
+    {
+      tag: "A SPECIAL SURPRISE",
+      badgeEmoji: "✨",
+      headingCalligraphy: "Made With Love For You",
+      title: `Welcome to Your Celebration, ${safeName}!`,
+      description:
+        "Someone special crafted this private celebration world just for you. Here is your personal guide to experiencing every gift waiting on this screen:",
+      featureList: [
+        "🎂 Birthday Cake: Step inside the party room & blow the candles",
+        "📖 Memory Diary: Flip through nostalgic photos & sweet notes",
+        "💌 Sealed Envelope: Read a personal heartfelt letter on floral parchment",
+        "📮 Love Mailbox: Pull puppet strings for songs, dreams & voice whisper",
+      ],
+      actionLabel: "Start Step-by-Step Guide →",
+    },
+    {
+      tag: "ITEM 1 OF 4",
+      badgeEmoji: "🎂",
+      headingCalligraphy: "Party & Cake Cutting",
+      title: "1. The Birthday Cake (Celebration Room)",
+      imageSrc: imgCake,
+      actionId: "birthday-cake",
+      actionLabel: "Step Inside Birthday Room 🎂",
+      description:
+        "Tap the Birthday Cake to step inside your 3D party room. Your custom celebration song will start playing automatically in the background as you enter!",
+      featureList: [
+        "🎵 Celebration music plays automatically to set the party mood",
+        "🕯️ Tap the glowing candles to make a wish and blow them out!",
+        "🎉 Pop festive party poppers and rain colorful confetti down",
+      ],
+    },
+    {
+      tag: "ITEM 2 OF 4",
+      badgeEmoji: "📖",
+      headingCalligraphy: "Cherished Moments",
+      title: "2. The Pink Memory Scrapbook",
+      imageSrc: imgPinkDiary,
+      actionId: "pink-diary",
+      actionLabel: "Open Memory Scrapbook 📖",
+      description:
+        "Tap the Pink Diary at the top-right to open an authentic handwritten scrapbook journal filled with shared memories and photographs.",
+      featureList: [
+        "📸 Turn and flip pages to browse memorable photos chosen for you",
+        "✍️ Read heartfelt handwritten notes and memories on each page",
+        "🌸 Enjoy the cute pastel stickers and vintage aesthetic keepsakes",
+      ],
+    },
+    {
+      tag: "ITEM 3 OF 4",
+      badgeEmoji: "💌",
+      headingCalligraphy: "Floral Stationery",
+      title: "3. The Wax-Sealed Heartfelt Letter",
+      imageSrc: imgEnvelope,
+      actionId: "envelope",
+      actionLabel: "Read the Letter 💌",
+      description:
+        "Tap the sealed envelope at the bottom-left to break the wax seal and unfold a long, personal letter written in flowing cursive calligraphy.",
+      featureList: [
+        "💌 Tap the envelope to break the romantic wax seal and unfold it",
+        "🖋️ Read deep, emotional words penned on authentic floral paper",
+        "💖 Re-read your letter anytime you want to feel loved and cherished",
+      ],
+    },
+    {
+      tag: "ITEM 4 OF 4",
+      badgeEmoji: "📮",
+      headingCalligraphy: "Puppet Theatre & Voice Whisper",
+      title: "4. The Love Mailbox & Putul Khela",
+      imageSrc: imgMailbox,
+      actionId: "mailbox",
+      actionLabel: "Open Love Mailbox 📮",
+      description:
+        "Tap the pink mailbox at the bottom-right to open the folk puppet theatre and reveal magical dream bubbles.",
+      featureList: [
+        "🎭 Pull the strings of the 8 marionette puppets to unlock secrets",
+        "🎙️ Pull চাঁদের পুতুল (Moonbeam Boy) to hear a real personal voice whisper recorded exclusively for you!",
+        "🎵 Listen to dedicated songs, view starlit photos, and read sweet promises",
+      ],
+    },
+    {
+      tag: "CENTERPIECE",
+      badgeEmoji: "💖",
+      headingCalligraphy: "Your Daily Blessing",
+      title: "The Centerpiece Greeting Card",
+      description:
+        "The card placed in the center of your screen holds a warm greeting and blessing. You can tap it anytime to re-read your wish!",
+      featureList: [
+        "✨ Tap the central card to read your personal front wish anytime",
+        "🎁 Tap any of the 4 items directly on your screen to explore them freely",
+        "🌟 Enjoy your special celebration — it was created with love!",
+      ],
+      actionLabel: "Explore Now ✨",
+    },
+  ];
+}
+
+export function GuideTourModal({
+  isOpen,
+  onClose,
+  onAction,
+  isReceiver = false,
+  recipientName = "",
+}: GuideTourModalProps) {
   const [currentStep, setCurrentStep] = useState(0);
+
+  const steps = isReceiver ? getReceiverTourSteps(recipientName) : SENDER_TOUR_STEPS;
+
+  // Reset to step 0 whenever opened
+  useEffect(() => {
+    if (isOpen) {
+      setCurrentStep(0);
+    }
+  }, [isOpen]);
 
   // Keyboard navigation: Left/Right arrows to flip, Esc to close
   useEffect(() => {
@@ -114,7 +233,7 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       if (e.key === "ArrowRight") {
-        setCurrentStep((s) => Math.min(s + 1, TOUR_STEPS.length - 1));
+        setCurrentStep((s) => Math.min(s + 1, steps.length - 1));
       }
       if (e.key === "ArrowLeft") {
         setCurrentStep((s) => Math.max(s - 1, 0));
@@ -122,13 +241,13 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, steps.length]);
 
   if (!isOpen) return null;
 
-  const step = TOUR_STEPS[currentStep];
+  const step = steps[currentStep] || steps[0];
   const isFirst = currentStep === 0;
-  const isLast = currentStep === TOUR_STEPS.length - 1;
+  const isLast = currentStep === steps.length - 1;
 
   const handleNext = () => {
     if (isLast) {
@@ -140,6 +259,15 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
 
   const handlePrev = () => {
     if (!isFirst) setCurrentStep((s) => s - 1);
+  };
+
+  const handleStepAction = () => {
+    if (step.actionId && onAction) {
+      onClose();
+      onAction(step.actionId);
+    } else {
+      handleNext();
+    }
   };
 
   return (
@@ -160,7 +288,7 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.94, y: 15 }}
           transition={{ type: "spring", damping: 26, stiffness: 320 }}
-          className="relative w-full max-w-[520px] rounded-[28px] overflow-hidden border border-white/80 bg-white/85 backdrop-blur-2xl shadow-[0_24px_70px_rgba(196,88,122,0.25),0_0_0_1px_rgba(255,255,255,0.7)] z-10 flex flex-col"
+          className="relative w-full max-w-[530px] rounded-[28px] overflow-hidden border border-white/80 bg-white/90 backdrop-blur-2xl shadow-[0_24px_70px_rgba(196,88,122,0.25),0_0_0_1px_rgba(255,255,255,0.7)] z-10 flex flex-col max-h-[92vh]"
         >
           {/* Top Decorative Header Strip */}
           <div className="h-1.5 w-full bg-gradient-to-r from-pink-400 via-rose-500 to-amber-300" />
@@ -172,7 +300,7 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
                 {step.badgeEmoji}
               </span>
               <span className="font-['DM_Mono',monospace] text-[10px] font-bold tracking-widest uppercase text-pink-800/80">
-                {step.tag} · STEP {currentStep + 1} OF {TOUR_STEPS.length}
+                {step.tag} · {currentStep + 1} OF {steps.length}
               </span>
             </div>
 
@@ -186,7 +314,7 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
           </div>
 
           {/* Body Content with smooth slide transitions */}
-          <div className="px-6 py-3 flex-1 flex flex-col min-h-[300px]">
+          <div className="px-6 py-2 flex-1 flex flex-col overflow-y-auto">
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentStep}
@@ -240,8 +368,8 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
                   {step.description}
                 </p>
 
-                {/* Feature Bullet Points */}
-                <div className="mt-3.5 space-y-1.5 px-3 py-2.5 rounded-xl bg-pink-50/60 border border-pink-100">
+                {/* Feature Bullet Points / Instructions */}
+                <div className="mt-3.5 space-y-1.5 px-3 py-2.5 rounded-xl bg-pink-50/70 border border-pink-100">
                   {step.featureList.map((feature, i) => (
                     <div key={i} className="flex items-start gap-2 text-[11px] font-['Poppins',sans-serif] text-[#553641]">
                       <span className="text-pink-500 font-bold shrink-0 mt-0.5">•</span>
@@ -249,23 +377,35 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
                     </div>
                   ))}
                 </div>
+
+                {/* Step Direct Action Button (if step has an interactive link) */}
+                {step.actionId && (
+                  <button
+                    type="button"
+                    onClick={handleStepAction}
+                    className="mt-3 w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 hover:from-pink-600 hover:to-rose-600 text-white font-['Poppins',sans-serif] text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                  >
+                    <Sparkles size={14} className="text-amber-200" />
+                    <span>{step.actionLabel || "Open This Gift Now"}</span>
+                  </button>
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
 
           {/* Footer Controls */}
-          <div className="px-6 py-4 bg-white/50 border-t border-pink-100/60 flex items-center justify-between">
+          <div className="px-6 py-3.5 bg-white/60 border-t border-pink-100/60 flex items-center justify-between">
             {/* Skip Tour Button */}
             <button
               onClick={onClose}
               className="text-[12px] font-['Poppins',sans-serif] font-medium text-pink-700/70 hover:text-pink-900 hover:underline cursor-pointer transition-colors"
             >
-              Skip Tour
+              {isReceiver ? "Close Guide" : "Skip Tour"}
             </button>
 
             {/* Pagination Dots */}
             <div className="flex items-center gap-1.5">
-              {TOUR_STEPS.map((_, idx) => (
+              {steps.map((_, idx) => (
                 <button
                   key={idx}
                   onClick={() => setCurrentStep(idx)}
@@ -305,4 +445,5 @@ export function GuideTourModal({ isOpen, onClose, onAction }: GuideTourModalProp
     </AnimatePresence>
   );
 }
+
 
