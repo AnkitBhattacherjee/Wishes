@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export type LetterFontStyle = "caveat" | "dancing" | "playfair";
 
@@ -17,7 +17,7 @@ interface FontConfig {
   fontFamily: string;
   isItalic?: boolean;
   lineHeight: number;
-  // Sizes from standard/spacious (Level 0) down to one-page limit
+  // Sizes from comfortable & natural (Level 0) down to one-page limit
   sizes: number[];
 }
 
@@ -25,18 +25,18 @@ export const LETTER_FONT_CONFIGS: Record<LetterFontStyle, FontConfig> = {
   caveat: {
     fontFamily: "'Caveat', cursive",
     lineHeight: 1.55,
-    sizes: [25, 23, 21, 19, 17, 15.5, 14, 13],
+    sizes: [18, 17, 16, 15, 14, 13, 12, 11],
   },
   dancing: {
     fontFamily: "'Dancing Script', cursive",
-    lineHeight: 1.65,
-    sizes: [23, 21, 19, 17.5, 16, 14.5, 13.5, 12.5],
+    lineHeight: 1.6,
+    sizes: [17, 16, 15, 14, 13, 12, 11],
   },
   playfair: {
     fontFamily: "'Playfair Display', serif",
     isItalic: true,
-    lineHeight: 1.7,
-    sizes: [18.5, 17, 15.5, 14, 13, 12],
+    lineHeight: 1.65,
+    sizes: [15, 14, 13.5, 13, 12, 11],
   },
 };
 
@@ -91,15 +91,16 @@ function measureTextHeight(
 
 /**
  * Automatically adjusts font size so that:
- * 1. Short or normal messages stay at the default large font size ("as now").
- * 2. If the text begins to exceed the frame (which would cause scrolling), the font size
- *    progressively steps down to fit up to a full one-page letter without scrolling.
+ * 1. Short or normal messages stay at a balanced, comfortable handwriting font size.
+ * 2. If the text begins to exceed the frame, font size progressively steps down to fit up to a full one-page letter without scrolling.
  * 3. Once it hits the lower readability limit, it stops decreasing and standard scrolling handles any excess.
+ * 4. Listens to `isOpen` transitions to guarantee recalculation and observation when conditionally mounted.
  */
 export function useDynamicLetterFont(
   text: string,
   fontStyle: LetterFontStyle = "caveat",
-  containerRef: React.RefObject<HTMLElement | null>
+  containerRef: React.RefObject<HTMLElement | null>,
+  isOpen: boolean = true
 ): DynamicLetterFont {
   const config = LETTER_FONT_CONFIGS[fontStyle] || LETTER_FONT_CONFIGS.caveat;
   const defaultSize = config.sizes[0];
@@ -198,20 +199,44 @@ export function useDynamicLetterFont(
     calculateFit();
   }, [calculateFit]);
 
-  // Observe container resizing (e.g. window resize or orientation change)
+  // Observe container mounting, visibility, and resizing
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    if (!isOpen) return;
 
-    const observer = new ResizeObserver(() => {
-      calculateFit();
-    });
-    observer.observe(el);
+    let observer: ResizeObserver | null = null;
+    let animId: number | null = null;
+    let cancelled = false;
+    let attempts = 0;
+
+    const attach = () => {
+      if (cancelled) return;
+      const el = containerRef.current;
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+        calculateFit();
+        observer = new ResizeObserver(() => {
+          calculateFit();
+        });
+        observer.observe(el);
+      } else if (attempts < 25) {
+        attempts++;
+        animId = requestAnimationFrame(attach);
+      }
+    };
+
+    attach();
+
+    // Re-check as Framer Motion spring transition settles
+    const t1 = setTimeout(calculateFit, 100);
+    const t2 = setTimeout(calculateFit, 350);
 
     return () => {
-      observer.disconnect();
+      cancelled = true;
+      if (animId) cancelAnimationFrame(animId);
+      if (observer) observer.disconnect();
+      clearTimeout(t1);
+      clearTimeout(t2);
     };
-  }, [containerRef, calculateFit]);
+  }, [isOpen, containerRef, calculateFit]);
 
   // Ensure recalculation after custom web fonts finish loading
   useEffect(() => {
@@ -220,8 +245,7 @@ export function useDynamicLetterFont(
         calculateFit();
       });
     }
-  }, [fontStyle, calculateFit]);
+  }, [fontStyle, calculateFit, isOpen]);
 
   return state;
 }
-

@@ -54,7 +54,7 @@ export function ShareModal({
     let syncedProject = nextProject;
     // Ensure full project and all media are saved to public cloud storage before copying the link
     try {
-      syncedProject = await persistGiftProject(nextProject);
+      syncedProject = await persistGiftProject(nextProject, true);
       onProjectUpdate(syncedProject);
     } catch (e) {
       console.warn("Could not sync sealed project to cloud before sharing:", e);

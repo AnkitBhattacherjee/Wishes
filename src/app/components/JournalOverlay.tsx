@@ -8,6 +8,7 @@ export default function JournalOverlay({
   pages,
   onPagesChange,
   onSave,
+  onOpenShareModal,
   isReceiver,
 }: {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export default function JournalOverlay({
   pages: ScrapbookPage[];
   onPagesChange: (pages: ScrapbookPage[]) => void;
   onSave: () => Promise<boolean>;
+  onOpenShareModal?: () => void;
   isReceiver?: boolean;
 }) {
   return (
@@ -34,6 +36,7 @@ export default function JournalOverlay({
             pages={pages}
             onPagesChange={onPagesChange}
             onSave={onSave}
+            onOpenShareModal={onOpenShareModal}
             isReceiver={isReceiver}
           />
         </motion.div>

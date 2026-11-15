@@ -23,9 +23,11 @@ import {
   DEFAULT_MAILBOX_ITEMS,
   uploadGiftFile,
   imageFileToDataUrl,
+  syncProjectToCloud,
   type MailboxBubbleItem,
   type MailboxBubbleType,
   type MailboxTheme,
+  type GiftProject,
 } from "../giftStore";
 import { uploadImageToCloud } from "../utils/imageCloudUpload";
 import {
@@ -39,6 +41,7 @@ import {
   saveAudioBlob,
   resolveAudioPlaybackUrl,
 } from "../utils/audioStorage";
+import { CachedImage } from "../utils/mediaCache";
 import {
   PutulKhelaStage,
   PUPPET_CATALOG,
@@ -136,6 +139,9 @@ export function MailboxModal({
   onThemeChange,
   projectId,
   isReceiver = false,
+  project,
+  onProjectSync,
+  onOpenShareModal,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -147,6 +153,12 @@ export function MailboxModal({
   onThemeChange?: (theme: MailboxTheme) => void;
   projectId?: string;
   isReceiver?: boolean;
+  /** Full project object — used for lightweight cloud JSON sync after media uploads */
+  project?: GiftProject;
+  /** Called with the synced project after a cloud JSON save */
+  onProjectSync?: (synced: GiftProject) => void;
+  /** Opens the unified Seal & Share Modal */
+  onOpenShareModal?: () => void;
 }) {
   const [internalItems, setInternalItems] = useState<MailboxBubbleItem[]>(() => {
     return rawItems && rawItems.length > 0 ? rawItems : DEFAULT_MAILBOX_ITEMS;
@@ -159,14 +171,36 @@ export function MailboxModal({
   }, [rawItems]);
 
   const items = internalItems;
+  const internalItemsRef = useRef(internalItems);
+  useEffect(() => { internalItemsRef.current = internalItems; }, [internalItems]);
 
-  const updateItems = (newItems: MailboxBubbleItem[]) => {
-    setInternalItems(newItems);
-    if (onUpdateItems) {
-      onUpdateItems(newItems);
-    }
-    if (onItemsChange) {
-      onItemsChange(newItems);
+  /**
+   * updateItems: accepts either a resolved array OR an updater function.
+   * When a function is passed (e.g. from background cloud upload handlers),
+   * we resolve it against the current items before calling parent callbacks,
+   * so the parent always receives a concrete MailboxBubbleItem[] array.
+   */
+  const updateItems = (newItemsOrFn: MailboxBubbleItem[] | ((prev: MailboxBubbleItem[]) => MailboxBubbleItem[])) => {
+    const resolved = typeof newItemsOrFn === "function"
+      ? newItemsOrFn(internalItemsRef.current)
+      : newItemsOrFn;
+    setInternalItems(resolved);
+    if (onUpdateItems) onUpdateItems(resolved);
+    if (onItemsChange) onItemsChange(resolved);
+  };
+
+  /**
+   * After a successful cloud upload, call this to sync the updated items
+   * to the parent project AND push a fresh project JSON to Catbox.
+   */
+  const syncItemsToCloud = async (resolvedItems: MailboxBubbleItem[]) => {
+    if (!project || !onProjectSync) return;
+    try {
+      const updatedProject = { ...project, mailboxItems: resolvedItems };
+      const synced = await syncProjectToCloud(updatedProject);
+      onProjectSync(synced);
+    } catch (e) {
+      console.warn("[MailboxModal] syncItemsToCloud failed:", e);
     }
   };
 
@@ -404,6 +438,7 @@ export function MailboxModal({
     updateItems(updated);
     setActiveItem(updatedItem);
     setIsEditingYtOnCard(false);
+    await syncItemsToCloud(updated);
     if (sunoAudio) {
       showToast("Suno AI song linked! Streaming directly in site 🎵");
     } else if (ytId) {
@@ -430,7 +465,7 @@ export function MailboxModal({
       const localPlaybackUrl = URL.createObjectURL(file);
 
       let base64Fallback: string | null = null;
-      if (file.size <= 300 * 1024) {
+      if (file.size <= 10 * 1024 * 1024) {
         try {
           base64Fallback = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -482,7 +517,7 @@ export function MailboxModal({
         }
       }, 100);
 
-      // 3. Upload to Supabase cloud storage in background
+      // 3. Upload to cloud storage in background
       (async () => {
         try {
           const cloudUrl = await uploadGiftFile(file);
@@ -496,15 +531,15 @@ export function MailboxModal({
                 ? { ...cloudItem, audioUrl: cloudUrl }
                 : curr
             );
-            updateItems((prevItems) =>
-              prevItems.map((i) =>
-                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
-                  ? cloudItem
-                  : i
-              )
+            const resolvedItems = internalItemsRef.current.map((i) =>
+              i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                ? cloudItem
+                : i
             );
+            updateItems(resolvedItems);
             showToast("🎉 Audio synced to cloud! Receiver can hear it too ✨");
-            console.log("[Puppet Audio] Audio synced to Supabase:", cloudUrl);
+            console.log("[Puppet Audio] Synced to cloud:", cloudUrl);
+            await syncItemsToCloud(resolvedItems);
           }
         } catch (uploadErr) {
           console.warn("[Puppet Audio] Background audio cloud upload deferred/failed:", uploadErr);
@@ -563,7 +598,7 @@ export function MailboxModal({
         const localBlobUrl = URL.createObjectURL(audioBlob);
 
         let base64Fallback: string | null = null;
-        if (audioBlob.size <= 300 * 1024) {
+        if (audioBlob.size <= 10 * 1024 * 1024) {
           try {
             base64Fallback = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -615,7 +650,7 @@ export function MailboxModal({
           }
         }, 100);
 
-        // 3. Upload to Supabase cloud storage in background
+        // 3. Upload to cloud storage in background
         (async () => {
           try {
             const cloudUrl = await uploadGiftFile(audioBlob, audioBlob.type);
@@ -630,14 +665,14 @@ export function MailboxModal({
                   ? { ...cloudItem, voiceUrl: isVoiceType ? cloudUrl : curr.voiceUrl, audioUrl: cloudUrl }
                   : curr
               );
-              updateItems((prevItems) =>
-                prevItems.map((i) =>
-                  i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
-                    ? cloudItem
-                    : i
-                )
+              const resolvedItems = internalItemsRef.current.map((i) =>
+                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                  ? cloudItem
+                  : i
               );
+              updateItems(resolvedItems);
               showToast("🎉 Voice note synced to cloud! Receiver can hear it ✨");
+              await syncItemsToCloud(resolvedItems);
             }
           } catch (uploadErr) {
             console.warn("[Puppet Voice] Background upload deferred/failed:", uploadErr);
@@ -678,7 +713,7 @@ export function MailboxModal({
       const localBlobUrl = URL.createObjectURL(file);
 
       let base64Fallback: string | null = null;
-      if (file.size <= 300 * 1024) {
+      if (file.size <= 10 * 1024 * 1024) {
         try {
           base64Fallback = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -729,7 +764,7 @@ export function MailboxModal({
         }
       }, 100);
 
-      // Upload to Supabase cloud storage in background
+      // Upload to cloud storage in background
       (async () => {
         try {
           const cloudUrl = await uploadGiftFile(file);
@@ -744,14 +779,14 @@ export function MailboxModal({
                 ? { ...cloudItem, voiceUrl: cloudUrl, audioUrl: cloudUrl }
                 : curr
             );
-            updateItems((prevItems) =>
-              prevItems.map((i) =>
-                i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
-                  ? cloudItem
-                  : i
-              )
+            const resolvedItems = internalItemsRef.current.map((i) =>
+              i.id === activeItem.id || (activeItem.puppetId && i.puppetId === activeItem.puppetId)
+                ? cloudItem
+                : i
             );
+            updateItems(resolvedItems);
             showToast("🎉 Voice note synced to cloud! Receiver can hear it ✨");
+            await syncItemsToCloud(resolvedItems);
           }
         } catch (uploadErr) {
           console.warn("[Voice Upload Sync]", uploadErr);
@@ -807,9 +842,10 @@ export function MailboxModal({
       updateItems(updated);
       showToast(
         finalUrl.startsWith("http")
-          ? "🎉 Photo saved to Supabase! Receiver can view it ✨"
-          : "📸 Photo saved! (Set up Supabase bucket so receiver can view it)"
+          ? "🎉 Photo saved to cloud! Receiver can view it ✨"
+          : "📸 Photo saved! (Cloud upload pending)"
       );
+      await syncItemsToCloud(updated);
     } catch (err) {
       showToast("Could not process this photo. Please choose another image.");
     } finally {
@@ -867,6 +903,7 @@ export function MailboxModal({
         )
       : [...items, updatedItem];
     updateItems(updated);
+    void syncItemsToCloud(updated);
     setIsEditingPhotoOnCard(false);
     showToast("Photo & caption saved! 📸");
   };
@@ -903,6 +940,7 @@ export function MailboxModal({
       : [...items, updatedItem];
 
     updateItems(updated);
+    void syncItemsToCloud(updated);
     setIsEditingCardMessage(false);
     showToast("Message updated! ✨");
   };
@@ -948,6 +986,7 @@ export function MailboxModal({
         setActiveItem(cleared);
       }
       updateItems(updated);
+      void syncItemsToCloud(updated);
       setIsEditingCardMessage(false);
       showToast("Message cleared / deleted 🗑️");
     }
@@ -1057,7 +1096,7 @@ export function MailboxModal({
     const localBlobUrl = URL.createObjectURL(file);
 
     let base64Url: string | null = null;
-    if (file.size <= 300 * 1024) {
+    if (file.size <= 10 * 1024 * 1024) {
       try {
         base64Url = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1224,6 +1263,7 @@ export function MailboxModal({
       updatedList = [...items, newItem];
     }
     updateItems(updatedList);
+    void syncItemsToCloud(updatedList);
     showToast(
       theme === "putulkhela"
         ? `🎭 Memory added to ${PUPPET_CATALOG[newPuppetId]?.nameBn || "puppet"}!`
@@ -1248,6 +1288,7 @@ export function MailboxModal({
   const handleDeleteItem = (id: string) => {
     const updated = items.filter((i) => i.id !== id);
     updateItems(updated);
+    void syncItemsToCloud(updated);
     if (activeItem?.id === id) setActiveItem(null);
   };
 
@@ -1336,8 +1377,8 @@ export function MailboxModal({
               </span>
             </div>
 
-            {/* Add Bubble Button in Glass (Only available in Bubble Realm; Puppets are a permanent cast) */}
-            {theme === "bubble" && (
+            {/* Add Bubble Button in Glass (Only available in Bubble Realm for sender; Puppets are a permanent cast) */}
+            {theme === "bubble" && !isReceiver && (
               <button
                 onClick={() => {
                   handleTabChange("note");
@@ -1350,6 +1391,19 @@ export function MailboxModal({
               >
                 <Plus size={13} strokeWidth={2.5} />
                 <span>Add Bubble 🫧</span>
+              </button>
+            )}
+
+            {/* Share / Seal Surprise Pill */}
+            {!isReceiver && onOpenShareModal && (
+              <button
+                type="button"
+                onClick={onOpenShareModal}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-xs font-bold shadow-md border border-amber-300/40 backdrop-blur-xl transition-all cursor-pointer hover:scale-105 active:scale-95 bg-gradient-to-r from-amber-500/90 to-rose-500/90"
+                title="Seal & Share Surprise Link"
+              >
+                <span>💌</span>
+                <span className="hidden sm:inline">Share Surprise</span>
               </button>
             )}
 
@@ -1617,7 +1671,7 @@ export function MailboxModal({
                             value={editCardMessage}
                             onChange={(e) => setEditCardMessage(e.target.value)}
                             placeholder="Write your words, dreams, or wishes here..."
-                            className="w-full min-h-[72px] px-3 py-2 rounded-xl border border-amber-400/70 bg-black/70 text-amber-100 font-['Caveat',cursive] text-lg sm:text-xl leading-relaxed outline-none focus:border-amber-300 resize-y"
+                            className="w-full min-h-[72px] px-3 py-2 rounded-xl border border-amber-400/70 bg-black/70 text-amber-100 font-['Caveat',cursive] text-base sm:text-lg leading-relaxed outline-none focus:border-amber-300 resize-y"
                           />
                         </div>
 
@@ -1973,11 +2027,11 @@ export function MailboxModal({
                             <span className="text-2xl mb-1">{activeItem.stampEmoji || "💌"}</span>
                             {activeItem.photoUrl && (
                               <div className="w-full max-h-40 aspect-[16/9] rounded-xl overflow-hidden border border-amber-400/70 shadow-lg my-1.5 bg-black/50">
-                                <img src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
+                                <CachedImage src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
                               </div>
                             )}
                             {activeItem.message ? (
-                              <p className="font-['Caveat',cursive] text-2xl sm:text-3xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
+                              <p className="font-['Caveat',cursive] text-base sm:text-lg md:text-xl text-amber-100 leading-relaxed drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] whitespace-pre-wrap">
                                 "{activeItem.message}"
                               </p>
                             ) : (
@@ -2200,7 +2254,7 @@ export function MailboxModal({
                               title={!isReceiver ? "Click to upload or change photo" : undefined}
                             >
                               {activeItem.photoUrl ? (
-                                <img
+                                <CachedImage
                                   src={activeItem.photoUrl}
                                   alt={activeItem.title}
                                   className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
@@ -2374,7 +2428,7 @@ export function MailboxModal({
                             <span className="text-3xl animate-bounce">✨</span>
                             {activeItem.photoUrl && (
                               <div className="w-full max-h-40 aspect-[16/9] rounded-xl overflow-hidden border border-amber-400/70 shadow-lg my-1 bg-black/50">
-                                <img src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
+                                <CachedImage src={activeItem.photoUrl} alt="" className="w-full h-full object-cover" />
                               </div>
                             )}
                             {activeItem.message ? (

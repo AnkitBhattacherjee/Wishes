@@ -14,12 +14,13 @@ import {
   loadGiftProject,
   persistGiftProject,
   saveGiftProject,
+  syncProjectToCloud,
   isSupabaseConfigured,
+  imageFileToDataUrl,
   type GiftProject,
   type CloudStatus,
 } from "../giftStore";
 import { preloadProjectAudios } from "../utils/audioPreloader";
-import { uploadImageToCloud } from "../utils/imageCloudUpload";
 import svgPaths from "../../imports/svg-mflmjqo28j";
 import imgImage10 from "figma:asset/22caa5ad402836f5fe397bca16006c6983d5252d.png";
 import imgLetterPaper from "../../imports/letter_paper.png";
@@ -42,106 +43,14 @@ const cakeImageMap: Record<string, string> = {
   decorated: imgCake4,
 };
 
-/* ── Curated Scenery Background Presets ── */
-export interface BackgroundPreset {
-  id: string;
-  name: string;
-  subtitle: string;
-  src: string;
-  thumbnail: string;
-}
-
-export const PRESET_BACKGROUNDS: BackgroundPreset[] = [
-  {
-    id: "default-stationery",
-    name: "Vintage Letter Parchment",
-    subtitle: "Original hand-painted aesthetic",
-    src: imgImage10,
-    thumbnail: imgImage10,
-  },
-  {
-    id: "rose-petals",
-    name: "Soft Rose Petals",
-    subtitle: "Romantic pastel blooms",
-    src: "https://images.unsplash.com/photo-1578972497170-bfc780c65f65?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1578972497170-bfc780c65f65?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "warm-bokeh",
-    name: "Golden Fairy Bokeh",
-    subtitle: "Warm magical twilight glow",
-    src: "https://images.unsplash.com/photo-1770740830168-eedfa0126ad8?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1770740830168-eedfa0126ad8?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "dreamy-clouds",
-    name: "Cotton Candy Sunset",
-    subtitle: "Dreamy pastel sky & clouds",
-    src: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "pastel-celebration",
-    name: "Festive Confetti",
-    subtitle: "Joyful celebration confetti",
-    src: "https://images.unsplash.com/photo-1769443398678-411926888200?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1769443398678-411926888200?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "floral-watercolor",
-    name: "Blossom Watercolor",
-    subtitle: "Botanical painterly canvas",
-    src: "https://images.unsplash.com/photo-1770977883066-4dbee15c84d2?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1770977883066-4dbee15c84d2?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "vintage-rose",
-    name: "Vintage Garden Roses",
-    subtitle: "Nostalgic antique pink florals",
-    src: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=260&q=70",
-  },
-  {
-    id: "starry-night",
-    name: "Starlit Midnight",
-    subtitle: "Deep celestial stars & wonder",
-    src: "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1920&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=260&q=70",
-  },
-];
-
-function formatUnsplashUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return "";
-
-  const photoPageMatch = trimmed.match(/unsplash\.com\/photos\/(?:[\w-]+-)?([a-zA-Z0-9_-]{5,})/);
-  if (photoPageMatch && photoPageMatch[1]) {
-    const photoId = photoPageMatch[1];
-    return `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&w=1920&q=80`;
-  }
-
-  if (trimmed.includes("images.unsplash.com")) {
-    try {
-      const urlObj = new URL(trimmed);
-      urlObj.searchParams.set("auto", "format");
-      urlObj.searchParams.set("fit", "crop");
-      if (!urlObj.searchParams.has("w") || Number(urlObj.searchParams.get("w")) < 1200) {
-        urlObj.searchParams.set("w", "1920");
-      }
-      if (!urlObj.searchParams.has("q")) {
-        urlObj.searchParams.set("q", "80");
-      }
-      return urlObj.toString();
-    } catch {
-      return trimmed;
-    }
-  }
-
-  return trimmed;
-}
+import {
+  PRESET_BACKGROUNDS,
+  type BackgroundPreset,
+  formatUnsplashUrl,
+} from "../constants/backgroundPresets";
 
 /* ── The 4 Main Interactive Components on WishPage (Identical Uniform Dimensions) ── */
-const STICKER_SIZE = 300;
+const STICKER_SIZE = 220;
 
 const stickers = [
   {
@@ -151,9 +60,9 @@ const stickers = [
     label: "🎂 Celebration Room & Cake",
     width: STICKER_SIZE,
     height: STICKER_SIZE,
-    top: "14%",
-    left: "11%",
-    rotate: -12,
+    top: "13%",
+    left: "8%",
+    rotate: -10,
     imgStyle: "w-full h-full object-contain drop-shadow-xl select-none pointer-events-none",
     navigable: true,
   },
@@ -164,9 +73,9 @@ const stickers = [
     label: "📖 Memory Scrapbook",
     width: STICKER_SIZE,
     height: STICKER_SIZE,
-    top: "13%",
-    right: "11%",
-    rotate: 14,
+    top: "12%",
+    right: "8%",
+    rotate: 12,
     imgStyle: "w-full h-full object-contain drop-shadow-xl select-none pointer-events-none",
   },
   {
@@ -176,9 +85,9 @@ const stickers = [
     label: "💌 Heartfelt Wish Letter",
     width: STICKER_SIZE,
     height: STICKER_SIZE,
-    top: "53%",
-    left: "11%",
-    rotate: -10,
+    top: "54%",
+    left: "8%",
+    rotate: -8,
     imgStyle: "w-full h-full object-contain drop-shadow-xl select-none pointer-events-none",
   },
   {
@@ -188,9 +97,9 @@ const stickers = [
     label: "📮 Love Mailbox & Notes",
     width: STICKER_SIZE,
     height: STICKER_SIZE,
-    top: "53%",
-    right: "11%",
-    rotate: 8,
+    top: "54%",
+    right: "8%",
+    rotate: 6,
     imgStyle: "w-full h-full object-contain drop-shadow-xl select-none pointer-events-none",
   },
 ];
@@ -234,14 +143,14 @@ function InteractiveSticker({
       onMouseLeave={() => setIsHovered(false)}
       animate={{
         rotate: isHovered ? sticker.rotate + 3 : sticker.rotate,
-        scale: isHovered ? 1.07 : 1,
+        scale: isHovered ? 1.04 : 1,
       }}
       whileTap={{ scale: 0.95 }}
       transition={{ type: "spring", stiffness: 350, damping: 22 }}
       onClick={onClick}
     >
       {/* Floating Action Badge on Hover */}
-      <div className="absolute -top-9 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs font-bold text-pink-600 shadow-lg whitespace-nowrap pointer-events-none border border-pink-200 z-30">
+      <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white/95 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold text-pink-600 shadow-md whitespace-nowrap pointer-events-none border border-pink-200 z-30">
         {sticker.label}
       </div>
 
@@ -250,15 +159,15 @@ function InteractiveSticker({
         <motion.div
           animate={{ y: [0, -2, 0] }}
           transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute -bottom-2 sm:-bottom-3 left-1/2 -translate-x-1/2 opacity-85 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[11px] font-semibold text-pink-700 shadow-sm border border-pink-200/70 whitespace-nowrap pointer-events-none z-20 flex items-center gap-1"
+          className="absolute -bottom-1.5 sm:-bottom-2 left-1/2 -translate-x-1/2 opacity-85 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[10px] font-semibold text-pink-700 shadow-xs border border-pink-200/70 whitespace-nowrap pointer-events-none z-20 flex items-center gap-1"
         >
-          <Sparkles size={11} className="text-pink-500" />
+          <Sparkles size={10} className="text-pink-500" />
           <span>{sticker.label}</span>
         </motion.div>
       )}
 
       <div
-        className="w-[230px] h-[230px] sm:w-[260px] sm:h-[260px] md:w-[280px] md:h-[280px] lg:w-[300px] lg:h-[300px] xl:w-[320px] xl:h-[320px] relative flex items-center justify-center pointer-events-none"
+        className="w-[160px] h-[160px] sm:w-[185px] sm:h-[185px] md:w-[205px] md:h-[205px] lg:w-[220px] lg:h-[220px] xl:w-[235px] xl:h-[235px] relative flex items-center justify-center pointer-events-none"
       >
         <img alt={sticker.alt} className={sticker.imgStyle} src={sticker.src} draggable={false} />
       </div>
@@ -423,6 +332,7 @@ function WishModal({
   relationship,
   initialWish,
   initialFontStyle,
+  isReceiver,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -431,22 +341,23 @@ function WishModal({
   relationship?: string;
   initialWish: string;
   initialFontStyle?: "caveat" | "dancing" | "playfair";
+  isReceiver?: boolean;
 }) {
   const [wish, setWish] = useState(initialWish);
   const [fontStyle, setFontStyle] = useState<LetterFontStyle>(
     (initialFontStyle as LetterFontStyle) || "caveat"
   );
-  const [isPreview, setIsPreview] = useState(false);
+  const [isPreview, setIsPreview] = useState(Boolean(isReceiver));
   const writingAreaRef = useRef<HTMLDivElement>(null);
-  const dynamicFont = useDynamicLetterFont(wish, fontStyle, writingAreaRef);
+  const dynamicFont = useDynamicLetterFont(wish, fontStyle, writingAreaRef, isOpen);
 
   useEffect(() => {
     if (isOpen) {
       setWish(initialWish);
       setFontStyle((initialFontStyle as LetterFontStyle) || "caveat");
-      setIsPreview(false);
+      setIsPreview(Boolean(isReceiver));
     }
-  }, [isOpen, initialWish, initialFontStyle]);
+  }, [isOpen, initialWish, initialFontStyle, isReceiver]);
 
   const wordCount = wish.trim() ? wish.trim().split(/\s+/).length : 0;
 
@@ -483,55 +394,63 @@ function WishModal({
 
             {/* Top Toolbar Overlay */}
             <div className="relative z-20 flex items-center justify-between px-6 sm:px-8 pt-4 pb-1">
-              {/* Pen Style Picker */}
-              <div className="flex items-center gap-1 bg-white/75 backdrop-blur-md px-2 py-1 rounded-full border border-pink-200/60 shadow-xs">
-                <Feather size={12} className="text-pink-600 ml-1 mr-0.5" />
-                <button
-                  type="button"
-                  onClick={() => setFontStyle("caveat")}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
-                    fontStyle === "caveat"
+              {/* Pen Style Picker - SENDER ONLY */}
+              {!isReceiver ? (
+                <div className="flex items-center gap-1 bg-white/75 backdrop-blur-md px-2 py-1 rounded-full border border-pink-200/60 shadow-xs">
+                  <Feather size={12} className="text-pink-600 ml-1 mr-0.5" />
+                  <button
+                    type="button"
+                    onClick={() => setFontStyle("caveat")}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${fontStyle === "caveat"
                       ? "bg-pink-500 text-white shadow-xs"
                       : "text-[#5a3a44] hover:text-pink-600"
-                  }`}
-                >
-                  Handwritten
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFontStyle("dancing")}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
-                    fontStyle === "dancing"
+                      }`}
+                  >
+                    Handwritten
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFontStyle("dancing")}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${fontStyle === "dancing"
                       ? "bg-pink-500 text-white shadow-xs"
                       : "text-[#5a3a44] hover:text-pink-600"
-                  }`}
-                >
-                  Cursive
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFontStyle("playfair")}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
-                    fontStyle === "playfair"
+                      }`}
+                  >
+                    Cursive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFontStyle("playfair")}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold transition-all cursor-pointer ${fontStyle === "playfair"
                       ? "bg-pink-500 text-white shadow-xs"
                       : "text-[#5a3a44] hover:text-pink-600"
-                  }`}
-                >
-                  Vintage
-                </button>
-              </div>
+                      }`}
+                  >
+                    Vintage
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/70 backdrop-blur-md border border-pink-200/50 shadow-xs">
+                  <Sparkles size={11} className="text-pink-600" />
+                  <span className="font-['Poppins',sans-serif] text-[11px] font-semibold text-[#5a3a44]">
+                    Heartfelt Letter for You
+                  </span>
+                </div>
+              )}
 
               {/* Mode & Close buttons */}
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsPreview((p) => !p)}
-                  className="flex items-center gap-1 bg-white/75 hover:bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full text-[11px] font-semibold text-[#5a3a44] border border-pink-200/60 shadow-xs cursor-pointer transition-colors"
-                  title={isPreview ? "Switch to Edit" : "Preview how it reads"}
-                >
-                  {isPreview ? <Edit3 size={12} /> : <Eye size={12} />}
-                  <span>{isPreview ? "Edit" : "Read"}</span>
-                </button>
+                {!isReceiver && (
+                  <button
+                    type="button"
+                    onClick={() => setIsPreview((p) => !p)}
+                    className="flex items-center gap-1 bg-white/75 hover:bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full text-[11px] font-semibold text-[#5a3a44] border border-pink-200/60 shadow-xs cursor-pointer transition-colors"
+                    title={isPreview ? "Switch to Edit" : "Preview how it reads"}
+                  >
+                    {isPreview ? <Edit3 size={12} /> : <Eye size={12} />}
+                    <span>{isPreview ? "Edit" : "Read"}</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -546,8 +465,8 @@ function WishModal({
             {/* Letter Content Writing Area (Inside the gold border) */}
             <div className="relative z-10 flex-1 flex flex-col px-8 sm:px-12 pt-4 pb-7 overflow-hidden">
               {/* Salutation - indented to clear top-left lily */}
-              <div className="mb-2 pl-6 sm:pl-10">
-                <p className="font-['Alex_Brush',cursive] text-[34px] sm:text-[40px] text-[#2e1820] leading-tight select-none">
+              <div className="mb-1.5 pl-6 sm:pl-10">
+                <p className="font-['Alex_Brush',cursive] text-[24px] sm:text-[28px] text-[#2e1820] leading-tight select-none">
                   My Dearest {name},
                 </p>
               </div>
@@ -579,7 +498,7 @@ function WishModal({
                     }}
                     className="w-full h-full overflow-y-auto letter-scroll p-1 text-[#2d1b22] whitespace-pre-wrap select-text"
                   >
-                    {wish.trim() || "(Your letter is currently empty. Switch to Edit to write your heartfelt words.)"}
+                    {wish.trim() || "(Your letter is currently empty.)"}
                   </div>
                 )}
               </div>
@@ -587,7 +506,7 @@ function WishModal({
               {/* Sign-off & Romantic Wax Seal */}
               <div className="pt-2 flex items-end justify-between select-none border-t border-[#dfc2c8]/40 mt-1">
                 <div>
-                  <p className="font-['Alex_Brush',cursive] text-[24px] sm:text-[28px] text-[#2e1820] leading-none">
+                  <p className="font-['Alex_Brush',cursive] text-[18px] sm:text-[21px] text-[#2e1820] leading-none">
                     Yours always,
                   </p>
                   <p className="font-['Poppins',sans-serif] text-[10px] sm:text-[11px] font-bold text-pink-700/90 tracking-wider mt-1 uppercase">
@@ -605,17 +524,17 @@ function WishModal({
             </div>
 
             {/* Bottom Action Footer Bar */}
-            <div className="relative z-20 px-6 sm:px-8 py-3 bg-white/75 backdrop-blur-md border-t border-pink-200/60 flex items-center justify-between">
+            <div className="relative z-20 px-6 sm:px-8 py-2.5 bg-white/75 backdrop-blur-md border-t border-pink-200/60 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-[#785460] font-['Poppins',sans-serif]">
                   {wordCount} {wordCount === 1 ? "word" : "words"} · {wish.length} chars
                 </span>
-                {dynamicFont.isScaledDown && !dynamicFont.isMinLimit && (
+                {!isReceiver && dynamicFont.isScaledDown && !dynamicFont.isMinLimit && (
                   <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full bg-pink-100/90 text-pink-700 text-[10px] font-bold border border-pink-200">
                     Auto-fit 1 page ({dynamicFont.scalePercent}%)
                   </span>
                 )}
-                {dynamicFont.isMinLimit && (
+                {!isReceiver && dynamicFont.isMinLimit && (
                   <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100/90 text-amber-800 text-[10px] font-bold border border-amber-200">
                     1 page full · scroll enabled
                   </span>
@@ -623,30 +542,43 @@ function WishModal({
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-[#785460] hover:bg-white/80 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
+                {isReceiver ? (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                    style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                  >
+                    <span>Fold Letter 💌</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="px-3.5 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-[#785460] hover:bg-white/80 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
 
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => {
-                    if (wish.trim()) {
-                      onSave(wish, fontStyle);
-                    } else {
-                      onClose();
-                    }
-                  }}
-                  className="px-6 py-2 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
-                  style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
-                >
-                  <Check size={14} strokeWidth={3} />
-                  <span>Fold & Save Letter 💌</span>
-                </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.96 }}
+                      onClick={() => {
+                        if (wish.trim()) {
+                          onSave(wish, fontStyle);
+                        } else {
+                          onClose();
+                        }
+                      }}
+                      className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                      style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                    >
+                      <Check size={14} strokeWidth={3} />
+                      <span>Fold & Save Letter 💌</span>
+                    </motion.button>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>
@@ -697,8 +629,8 @@ export default function WishPage() {
   const viewParam = searchParams.get("view") || hashSearch?.get("view");
   const isReceiver = Boolean(
     (giftParam && !editParam) ||
-      viewParam === "receiver" ||
-      (!editParam && project.isSealed && !project.editToken)
+    viewParam === "receiver" ||
+    (!editParam && project.isSealed && !project.editToken)
   );
 
   useEffect(() => {
@@ -742,7 +674,7 @@ export default function WishPage() {
         const timer = setTimeout(() => setIsGuideOpen(true), 650);
         return () => clearTimeout(timer);
       }
-    } catch {}
+    } catch { }
   }, [isReceiver]);
 
   const handleCloseGuide = () => {
@@ -750,7 +682,7 @@ export default function WishPage() {
     try {
       const storageKey = isReceiver ? "wish_receiver_guide_seen" : "wish_guide_dismissed";
       localStorage.setItem(storageKey, "true");
-    } catch {}
+    } catch { }
   };
 
   useEffect(() => {
@@ -771,8 +703,7 @@ export default function WishPage() {
     const targetId =
       searchParams.get("id") ||
       hashQuery?.get("id") ||
-      (giftParam && /^[0-9a-f-]{30,40}$/i.test(giftParam) ? giftParam : null) ||
-      (project.projectId && /^[0-9a-f-]{30,40}$/i.test(project.projectId) ? project.projectId : null);
+      (giftParam && /^[a-zA-Z0-9_-]{10,40}$/i.test(giftParam) ? giftParam : null);
     const cloudParam = searchParams.get("cloud") || hashQuery?.get("cloud") || project.cloudUrl || undefined;
 
     if (!targetId && !cloudParam) return;
@@ -780,10 +711,17 @@ export default function WishPage() {
     loadCloudGiftProject(targetId || project.projectId, cloudParam)
       .then((loaded) => {
         if (loaded && (loaded.recipient || loaded.projectId)) {
-          setProject((prev) => ({
-            ...loaded,
-            isSealed: isReceiver ? true : (loaded.isSealed ?? prev.isSealed),
-          }));
+          setProject((prev) => {
+            const journalPages = (loaded.journalPages && loaded.journalPages.length > 0)
+              ? loaded.journalPages
+              : prev.journalPages;
+            return {
+              ...prev,
+              ...loaded,
+              journalPages,
+              isSealed: isReceiver ? true : (loaded.isSealed ?? prev.isSealed),
+            };
+          });
           setCloudStatus("saved");
           preloadProjectAudios(loaded);
         }
@@ -841,13 +779,13 @@ export default function WishPage() {
     try {
       setIsUploadingBg(true);
       setUnsplashError(null);
-      const cloudUrl = await uploadImageToCloud(file);
-      if (cloudUrl && cloudUrl.startsWith("http")) {
-        updateProject({ customBgUrl: cloudUrl });
-      }
+      // Downscale locally using canvas to lightweight JPEG data URL (~120KB) - instant, zero CORS or network failure
+      const dataUrl = await imageFileToDataUrl(file, 1600, 0.82);
+      updateProject({ customBgUrl: dataUrl });
+      setIsBgDropdownOpen(false);
     } catch (err) {
       console.error("Background photo upload failed:", err);
-      setUnsplashError("Could not upload background image. Please check your connection.");
+      setUnsplashError("Could not process background image. Please select a JPG or PNG.");
     } finally {
       setIsUploadingBg(false);
       if (bgFileInputRef.current) bgFileInputRef.current.value = "";
@@ -885,10 +823,12 @@ export default function WishPage() {
     setUnsplashError(null);
     updateProject({ customBgUrl: formatted });
     setUnsplashInput("");
+    setIsBgDropdownOpen(false);
   };
 
   const handleSelectPreset = (index: number) => {
     updateProject({ customBgUrl: null, backgroundIndex: index });
+    setIsBgDropdownOpen(false);
   };
 
   const handleResetToDefault = () => {
@@ -905,7 +845,7 @@ export default function WishPage() {
   const shareGift = async () => {
     try {
       setCloudStatus("loading");
-      await persistGiftProject(project).catch(() => {});
+      await persistGiftProject(project).catch(() => { });
       setCloudStatus("saved");
       const url = createShareLink(project);
       if (navigator.share) {
@@ -914,7 +854,7 @@ export default function WishPage() {
           setShareStatus("copied");
           window.setTimeout(() => setShareStatus("idle"), 1800);
         } catch {
-          await navigator.clipboard.writeText(url).catch(() => {});
+          await navigator.clipboard.writeText(url).catch(() => { });
           setShareStatus("copied");
           window.setTimeout(() => setShareStatus("idle"), 1800);
         }
@@ -937,18 +877,11 @@ export default function WishPage() {
 
   const handleStickerClick = (stickerId: string) => {
     if (stickerId === "birthday-cake") {
-      let search = location.search;
-      if (isReceiver && (!search || !search.includes("view=receiver"))) {
-        const params = new URLSearchParams(search);
-        if (giftParam) params.set("gift", giftParam);
-        if (project.projectId) params.set("id", project.projectId);
-        if (project.cloudUrl) params.set("cloud", project.cloudUrl);
-        params.set("view", "receiver");
-        search = `?${params.toString()}`;
-      } else if (!search && giftParam) {
-        search = `?gift=${giftParam}&id=${project.projectId}&view=receiver`;
-      }
-      navigate(`/room${search}`, {
+      const targetId = project.supabaseId || project.projectId;
+      const params = new URLSearchParams(location.search);
+      if (targetId) params.set("id", targetId);
+      if (isReceiver) params.set("view", "receiver");
+      navigate(`/room?${params.toString()}`, {
         state: {
           name,
           occasion,
@@ -1007,7 +940,7 @@ export default function WishPage() {
         <div className="absolute top-[28px] left-[28px] z-40" ref={bgDropdownRef}>
           <motion.button
             type="button"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border border-white/60 transition-all hover:bg-white/90 shadow-md backdrop-blur-md"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full cursor-pointer border border-white/60 transition-all hover:bg-white/90 shadow-md backdrop-blur-md"
             style={{
               background: isBgDropdownOpen ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.72)",
               boxShadow: "0 4px 20px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5)",
@@ -1021,13 +954,13 @@ export default function WishPage() {
               transition={{ duration: 0.25 }}
               className="text-[#6b5e58]"
             >
-              <ImageIcon size={16} className="text-[#c4587a]" />
+              <ImageIcon size={14} className="text-[#c4587a]" />
             </motion.div>
-            <span className="font-['Poppins',sans-serif] text-[13px] font-medium text-[#5a4e48]">
+            <span className="font-['Poppins',sans-serif] text-xs font-medium text-[#5a4e48]">
               {isUsingCustom ? "Custom bg active" : "Change bg"}
             </span>
             <ChevronDown
-              size={14}
+              size={13}
               className={`text-[#765762] transition-transform duration-200 ${isBgDropdownOpen ? "rotate-180" : ""}`}
             />
           </motion.button>
@@ -1171,11 +1104,10 @@ export default function WishPage() {
                           key={preset.id}
                           type="button"
                           onClick={() => handleSelectPreset(idx)}
-                          className={`group relative flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${
-                            isSelected
-                              ? "bg-pink-100/70 border-pink-400 ring-2 ring-pink-300 shadow-xs"
-                              : "bg-white/60 hover:bg-white border-pink-100/90 hover:border-pink-300"
-                          }`}
+                          className={`group relative flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${isSelected
+                            ? "bg-pink-100/70 border-pink-400 ring-2 ring-pink-300 shadow-xs"
+                            : "bg-white/60 hover:bg-white border-pink-100/90 hover:border-pink-300"
+                            }`}
                         >
                           <img
                             src={preset.thumbnail}
@@ -1209,16 +1141,15 @@ export default function WishPage() {
       {/* Update button - SENDER ONLY */}
       {!isReceiver && (
         <motion.button
-          className={`absolute bottom-6 left-7 z-30 flex items-center gap-2 rounded-full px-5 py-3 font-['Poppins',sans-serif] text-[13px] shadow-lg backdrop-blur-md ${
-            hasChanges
-              ? "bg-[#c4587a] text-white"
-              : "border border-white/35 bg-white/65 text-[#765762]"
-          }`}
+          className={`absolute bottom-6 left-7 z-30 flex items-center gap-1.5 rounded-full px-4 py-2 font-['Poppins',sans-serif] text-xs shadow-lg backdrop-blur-md ${hasChanges
+            ? "bg-[#c4587a] text-white"
+            : "border border-white/35 bg-white/65 text-[#765762]"
+            }`}
           whileHover={{ scale: 1.04 }}
           whileTap={{ scale: 0.96 }}
           onClick={saveChanges}
         >
-          {hasChanges ? <span className="size-2 rounded-full bg-white shadow-[0_0_8px_white]" /> : <Check size={15} />}
+          {hasChanges ? <span className="size-2 rounded-full bg-white shadow-[0_0_8px_white]" /> : <Check size={14} />}
           {hasChanges ? (hasSaved ? "Save update" : "Save") : "Update"}
         </motion.button>
       )}
@@ -1233,7 +1164,7 @@ export default function WishPage() {
       {/* Top Action Buttons: Receiver sees ONLY the elegant Gift Guide; Sender sees Guide, Share & Back */}
       {isReceiver ? (
         <motion.button
-          className="absolute right-[28px] top-[28px] z-30 flex items-center gap-2 rounded-full px-4 py-2.5 cursor-pointer border border-white/80 shadow-md backdrop-blur-md transition-all hover:bg-white/95"
+          className="absolute right-[28px] top-[28px] z-30 flex items-center gap-1.5 rounded-full px-3.5 py-1.5 cursor-pointer border border-white/80 shadow-md backdrop-blur-md transition-all hover:bg-white/95"
           style={{
             background: "rgba(255, 255, 255, 0.78)",
             boxShadow: "0 4px 20px rgba(196,88,122,0.18), 0 0 0 1px rgba(255,255,255,0.7)",
@@ -1243,8 +1174,8 @@ export default function WishPage() {
           onClick={() => setIsGuideOpen(true)}
           title="Open Celebration Gift Guide ✨"
         >
-          <Sparkles size={15} className="text-pink-600 animate-spin" style={{ animationDuration: "5s" }} />
-          <span className="font-['Poppins',sans-serif] text-[13px] font-semibold text-[#5a3a44]">
+          <Sparkles size={14} className="text-pink-600 animate-spin" style={{ animationDuration: "5s" }} />
+          <span className="font-['Poppins',sans-serif] text-xs font-semibold text-[#5a3a44]">
             ✨ Gift Guide
           </span>
         </motion.button>
@@ -1252,7 +1183,7 @@ export default function WishPage() {
         <>
           {/* Guide button - Sender */}
           <motion.button
-            className="absolute right-[215px] top-[28px] z-30 flex items-center gap-1.5 rounded-full border-none px-3.5 py-2.5 transition-colors hover:bg-white/85 cursor-pointer"
+            className="absolute right-[186px] top-[28px] z-30 flex items-center gap-1.5 rounded-full border-none px-3 py-1.5 transition-colors hover:bg-white/85 cursor-pointer"
             style={{
               background: "rgba(255,255,255,0.65)",
               backdropFilter: "blur(12px)",
@@ -1263,13 +1194,13 @@ export default function WishPage() {
             onClick={() => setIsGuideOpen(true)}
             title="Open User Guide"
           >
-            <Sparkles size={14} className="text-[#c4587a]" />
-            <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48] hidden sm:inline">Guide</span>
+            <Sparkles size={13} className="text-[#c4587a]" />
+            <span className="font-['Poppins',sans-serif] text-xs text-[#5a4e48] hidden sm:inline">Guide</span>
           </motion.button>
 
           {/* Share button - Sender */}
           <motion.button
-            className="absolute right-[112px] top-[28px] z-30 flex items-center gap-2 rounded-full border-none px-4 py-2.5 cursor-pointer"
+            className="absolute right-[96px] top-[28px] z-30 flex items-center gap-1.5 rounded-full border-none px-3.5 py-1.5 cursor-pointer"
             style={{
               background: "rgba(255,255,255,0.65)",
               backdropFilter: "blur(12px)",
@@ -1279,15 +1210,15 @@ export default function WishPage() {
             whileTap={{ scale: 0.96 }}
             onClick={() => setIsShareModalOpen(true)}
           >
-            <Share2 size={15} className={project.isSealed ? "text-[#c4587a]" : "text-[#6b5e58]"} />
-            <span className="font-['Poppins',sans-serif] text-[13px] text-[#5a4e48]">
+            <Share2 size={13} className={project.isSealed ? "text-[#c4587a]" : "text-[#6b5e58]"} />
+            <span className="font-['Poppins',sans-serif] text-xs text-[#5a4e48]">
               {project.isSealed ? "Sealed 💌" : "Share"}
             </span>
           </motion.button>
 
           {/* Back button - Sender */}
           <motion.button
-            className="absolute top-[28px] right-[28px] z-30 flex items-center gap-2 px-4 py-2.5 rounded-full cursor-pointer border-none"
+            className="absolute top-[28px] right-[28px] z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full cursor-pointer border-none"
             style={{
               background: "rgba(255,255,255,0.65)",
               backdropFilter: "blur(12px)",
@@ -1297,7 +1228,7 @@ export default function WishPage() {
             whileTap={{ scale: 0.96 }}
             onClick={() => navigate("/")}
           >
-            <span className="font-['Poppins',sans-serif] text-[14px] text-[#5a4e48]">Back</span>
+            <span className="font-['Poppins',sans-serif] text-xs text-[#5a4e48]">Back</span>
           </motion.button>
         </>
       )}
@@ -1307,22 +1238,22 @@ export default function WishPage() {
         {[
           { text: "✨", top: "27%", left: "49%", delay: 0 },
           { text: "🌸", top: "75%", left: "49%", delay: 1.5 },
-          { text: "💕", top: "34%", left: "33%", delay: 0.8 },
-          { text: "⭐", top: "34%", right: "33%", delay: 2.2 },
-          { text: "🎀", top: "69%", left: "32%", delay: 1.2 },
-          { text: "💫", top: "69%", right: "32%", delay: 1.8 },
+          { text: "💕", top: "34%", left: "30%", delay: 0.8 },
+          { text: "⭐", top: "34%", right: "30%", delay: 2.2 },
+          { text: "🎀", top: "69%", left: "29%", delay: 1.2 },
+          { text: "💫", top: "69%", right: "29%", delay: 1.8 },
         ].map((item, idx) => (
           <motion.div
             key={idx}
-            className="absolute text-xl sm:text-2xl select-none"
+            className="absolute text-lg sm:text-xl select-none"
             style={{
               top: item.top,
               left: "left" in item ? (item as any).left : undefined,
               right: "right" in item ? (item as any).right : undefined,
             }}
             animate={{
-              y: [-6, 6, -6],
-              opacity: [0.35, 0.75, 0.35],
+              y: [-5, 5, -5],
+              opacity: [0.3, 0.7, 0.3],
               scale: [0.95, 1.05, 0.95],
             }}
             transition={{
@@ -1339,7 +1270,7 @@ export default function WishPage() {
 
       {/* Top Heading: Receiver sees customized title or celebration title; Sender can tap to edit */}
       <motion.div
-        className="absolute top-[32px] sm:top-[42px] left-1/2 -translate-x-1/2 z-20 max-w-[94vw] text-center"
+        className="absolute top-[26px] sm:top-[34px] left-1/2 -translate-x-1/2 z-20 max-w-[90vw] text-center"
         whileHover={!isReceiver && !isEditingHeader ? { scale: 1.02 } : undefined}
       >
         {!isReceiver && isEditingHeader ? (
@@ -1360,7 +1291,7 @@ export default function WishPage() {
               }}
               placeholder="Write Your Wish..."
               maxLength={65}
-              className="font-['Alex_Brush',cursive] text-[42px] sm:text-[54px] lg:text-[64px] text-[#3a2a2a] text-center bg-white/85 backdrop-blur-md px-5 py-0.5 rounded-2xl border-2 border-pink-300 focus:border-pink-500 outline-none w-[92vw] max-w-[560px] leading-tight shadow-xl"
+              className="font-['Alex_Brush',cursive] text-[34px] sm:text-[42px] lg:text-[48px] text-[#3a2a2a] text-center bg-white/85 backdrop-blur-md px-4 py-0.5 rounded-2xl border-2 border-pink-300 focus:border-pink-500 outline-none w-[90vw] max-w-[500px] leading-tight shadow-lg"
               autoFocus
             />
             <div className="flex items-center gap-2 mt-1">
@@ -1390,31 +1321,30 @@ export default function WishPage() {
               setHeaderInput(project.headerTitle || "");
               setIsEditingHeader(true);
             }}
-            className={`flex flex-col items-center select-none ${
-              !isReceiver ? "cursor-pointer group" : ""
-            }`}
+            className={`flex flex-col items-center select-none ${!isReceiver ? "cursor-pointer group" : ""
+              }`}
             title={!isReceiver ? "Tap to write a line ✍️" : undefined}
           >
             <div className={`flex items-center justify-center gap-2 px-3 py-1 rounded-2xl transition-all ${!isReceiver ? "hover:bg-white/30 backdrop-blur-xs" : ""}`}>
-              <p className={`font-['Alex_Brush',cursive] text-[48px] sm:text-[60px] lg:text-[68px] text-[#3a2a2a] select-none leading-none drop-shadow-sm transition-colors ${!isReceiver ? "group-hover:text-pink-900" : ""}`}>
+              <p className={`font-['Alex_Brush',cursive] text-[26px] sm:text-[32px] lg:text-[38px] text-[#3a2a2a] select-none leading-none drop-shadow-sm transition-colors ${!isReceiver ? "group-hover:text-pink-900" : ""}`}>
                 {isReceiver
                   ? (project.headerTitle && project.headerTitle.trim() && project.headerTitle.trim().toLowerCase() !== "write your wish"
-                      ? project.headerTitle.trim()
-                      : (name ? `A Celebration for ${name}` : "A Celebration for You"))
+                    ? project.headerTitle.trim()
+                    : (name ? `A Celebration for ${name}` : "A Celebration for You"))
                   : (project.headerTitle?.trim() || "Write Your Wish")}
               </p>
               {!isReceiver && (
                 <Edit3
-                  size={16}
+                  size={15}
                   className="text-pink-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                 />
               )}
             </div>
             <motion.div
-              className="mx-auto mt-2 rounded-full"
+              className="mx-auto mt-1.5 rounded-full"
               style={{
-                width: "180px",
-                height: "2.5px",
+                width: "140px",
+                height: "2px",
                 background: "linear-gradient(90deg, transparent, rgba(196,88,122,0.5), transparent)",
               }}
               animate={{ scaleX: [0.6, 1.1, 0.6] }}
@@ -1426,8 +1356,8 @@ export default function WishPage() {
 
       {/* Centerpiece Greeting Card (Short 1-2 line wish / quote, distinct from the complete letter) */}
       <motion.div
-        className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[460px] max-w-[86vw] cursor-pointer"
-        whileHover={{ scale: 1.03, y: -4 }}
+        className="absolute top-[51%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[390px] sm:w-[410px] max-w-[84vw] cursor-pointer"
+        whileHover={{ scale: 1.025, y: -3 }}
         whileTap={{ scale: 0.98 }}
         onClick={() => {
           if (isReceiver) {
@@ -1439,7 +1369,7 @@ export default function WishPage() {
         title={isReceiver ? "Tap to read full heartfelt letter 💌" : "Tap to edit greeting wish ✍️"}
       >
         <div
-          className="rounded-[24px] p-6 sm:p-7 relative overflow-hidden backdrop-blur-md transition-all duration-300 border border-amber-200/70 shadow-[0_20px_50px_rgba(196,88,122,0.18),0_6px_20px_rgba(0,0,0,0.06)] text-center"
+          className="rounded-[22px] p-5 sm:p-6 relative overflow-hidden backdrop-blur-md transition-all duration-300 border border-amber-200/70 shadow-[0_16px_40px_rgba(196,88,122,0.15),0_4px_16px_rgba(0,0,0,0.05)] text-center"
         >
           {/* Real Letter Paper Texture */}
           <img
@@ -1451,13 +1381,13 @@ export default function WishPage() {
           <div className="absolute inset-0 bg-white/45 backdrop-blur-[1px] pointer-events-none" />
 
           <div className="relative z-10 flex flex-col items-center">
-            <div className="flex items-center justify-center gap-2 mb-2 text-pink-700 text-[11px] font-bold tracking-widest uppercase">
-              <Sparkles size={13} />
+            <div className="flex items-center justify-center gap-1.5 mb-1.5 text-pink-700 text-[10px] font-bold tracking-widest uppercase">
+              <Sparkles size={12} />
               <span>{frontWish ? "Special Wish" : `A Wish For ${name}`}</span>
-              <Sparkles size={13} />
+              <Sparkles size={12} />
             </div>
 
-            <p className="font-['Caveat',cursive] text-[24px] sm:text-[28px] leading-relaxed text-[#2d1b22] px-4 select-none">
+            <p className="font-['Caveat',cursive] text-[16px] sm:text-[18.5px] leading-relaxed text-[#2d1b22] px-3 select-none">
               "{displayFrontWish}"
             </p>
           </div>
@@ -1535,6 +1465,7 @@ export default function WishPage() {
         relationship={relationship}
         initialWish={savedWish}
         initialFontStyle={project.letterFont || "caveat"}
+        isReceiver={isReceiver}
       />
 
       {/* Journal Overlay */}
@@ -1545,6 +1476,7 @@ export default function WishPage() {
         pages={project.journalPages}
         onPagesChange={(journalPages) => updateProject({ journalPages })}
         onSave={saveChanges}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
         isReceiver={isReceiver}
       />
 
@@ -1559,6 +1491,9 @@ export default function WishPage() {
         onThemeChange={(mailboxTheme) => updateProject({ mailboxTheme })}
         projectId={project.projectId}
         isReceiver={isReceiver}
+        project={project}
+        onProjectSync={(synced) => setProject(synced)}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
       />
 
       {/* Interactive User Guide Tour Modal */}

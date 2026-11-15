@@ -359,18 +359,27 @@ export default function RoomPage() {
 
   // Fetch latest project from Supabase on mount / page refresh (for both sender and receiver)
   useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const hashQuery = typeof window !== "undefined" && window.location.hash.includes("?")
+      ? new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf("?")))
+      : null;
     const targetId =
+      searchParams.get("id") ||
+      hashQuery?.get("id") ||
       giftParam ||
-      (project.projectId && /^[0-9a-f-]{30,40}$/i.test(project.projectId) ? project.projectId : null);
-    if (!targetId || !isSupabaseConfigured()) return;
+      (project.supabaseId || project.projectId);
+    if (!targetId) return;
     loadCloudGiftProject(targetId)
       .then((loaded) => {
         setProject(loaded);
         projectRef.current = loaded;
+        if (loaded.cake) {
+          setSelectedCake(resolveCakeKey(loaded.cake));
+        }
         preloadProjectAudios(loaded);
       })
       .catch(() => {});
-  }, [giftParam, project.projectId]);
+  }, [giftParam, project.projectId, project.supabaseId, location.search, location.hash]);
 
   // Preload all audio assets into browser cache for seamless instant playback
   useEffect(() => {
@@ -390,7 +399,13 @@ export default function RoomPage() {
   const initialCake = resolveCakeKey(project.cake);
   const [selectedCake, setSelectedCake] = useState<CakeKey>(initialCake);
   const [hoveredCake, setHoveredCake] = useState<CakeKey | null>(null);
-  const [isDecorating, setIsDecorating] = useState<boolean>(!project.cake);
+  const [isDecorating, setIsDecorating] = useState<boolean>(!project.cake && !isReceiver);
+
+  useEffect(() => {
+    if (project.cake) {
+      setSelectedCake(resolveCakeKey(project.cake));
+    }
+  }, [project.cake]);
 
   const [isCandlesLit, setIsCandlesLit] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false);
@@ -403,7 +418,8 @@ export default function RoomPage() {
   const roomDynamicFont = useDynamicLetterFont(
     wish || "",
     (project.letterFont as LetterFontStyle) || "caveat",
-    roomLetterContainerRef
+    roomLetterContainerRef,
+    showWishCard
   );
 
   // ── Birthday Song Audio/YouTube Player State ──
@@ -622,7 +638,7 @@ export default function RoomPage() {
     setIsMuted(nextMute);
   };
 
-  // Upload Custom Song (MP3 / Audio) to Reliable Cloud Storage & IndexedDB (2-stage Scrapbook workflow)
+  // Upload Custom Song (MP3 / Audio) to Reliable Cloud Storage & IndexedDB (same architecture as scrapbook)
   const handleUploadCustomSong = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -654,48 +670,57 @@ export default function RoomPage() {
         }
       }, 100);
 
-      let savedUrl = "idb:room_custom_song";
-      if (file.size <= 300 * 1024) {
+      // 2. Read as data URL fallback (up to 10MB) for direct Supabase KV embedding
+      let base64Audio: string | null = null;
+      if (file.size <= 10 * 1024 * 1024) {
         try {
-          savedUrl = await new Promise<string>((resolve, reject) => {
+          base64Audio = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onerror = () => reject(reader.error);
             reader.onload = () => resolve(reader.result as string);
             reader.readAsDataURL(file);
           });
-        } catch {}
+        } catch (e) {
+          console.warn("[Room Song] Base64 conversion deferred:", e);
+        }
       }
 
       const initialProject = saveGiftProject({
         ...project,
         customSongYoutubeId: null,
-        customSongUrl: savedUrl,
+        customSongUrl: base64Audio || "idb:room_custom_song",
         customSongName: fileName,
       });
+      projectRef.current = initialProject;
       setProject(initialProject);
       persistGiftProject(initialProject).catch(() => {});
 
-      showToast("Song saved! 🎵✨");
+      showToast("Song selected! 🎵 Uploading to cloud...");
       setIsUploadingSong(false);
 
-      // 2. Upload to Supabase cloud storage in background
+      // 3. Upload to cloud storage (Catbox / Litterbox / Supabase Storage) in background
       (async () => {
         try {
-          const cloudUrl = await uploadAudioToCloud(file, fileName);
-          if (cloudUrl && cloudUrl.startsWith("http")) {
-            const currentProj = projectRef.current || project;
-            const updatedProject = saveGiftProject({
-              ...currentProj,
-              customSongYoutubeId: null,
-              customSongUrl: cloudUrl,
-              customSongName: fileName,
-            });
-            projectRef.current = updatedProject;
-            setProject(updatedProject);
-            await persistGiftProject(updatedProject);
-            showToast("🎉 Song synced to cloud! Receiver can hear it too ✨");
-            console.log("[Room Song] Synced to Supabase:", cloudUrl);
+          let cloudUrl: string | null = null;
+          try {
+            cloudUrl = await uploadAudioToCloud(file, fileName);
+          } catch (cloudErr) {
+            console.warn("[Room Song] Cloud storage upload fallback to Supabase payload:", cloudErr);
           }
+
+          const finalUrl = (cloudUrl && cloudUrl.startsWith("http")) ? cloudUrl : (base64Audio || "idb:room_custom_song");
+          const currentProj = projectRef.current || initialProject;
+          const updatedProject = saveGiftProject({
+            ...currentProj,
+            customSongYoutubeId: null,
+            customSongUrl: finalUrl,
+            customSongName: fileName,
+          });
+          projectRef.current = updatedProject;
+          setProject(updatedProject);
+          await persistGiftProject(updatedProject);
+          showToast("🎉 Song saved & synced to cloud! Receiver can hear it too ✨");
+          console.log("[Room Song] Successfully saved and synced to Supabase:", finalUrl.slice(0, 50));
         } catch (uploadErr) {
           console.warn("[Room Song] Background cloud upload deferred/failed:", uploadErr);
         }
@@ -827,8 +852,8 @@ export default function RoomPage() {
     }, 150);
   };
 
-  // Save cake selection
-  const handleSelectCake = (cakeId: CakeKey) => {
+  // Save cake selection & sync immediately to Supabase KV Store (same architecture as scrapbook)
+  const handleSelectCake = async (cakeId: CakeKey) => {
     setSelectedCake(cakeId);
     setHoveredCake(null);
     setIsDecorating(false);
@@ -837,6 +862,16 @@ export default function RoomPage() {
       cake: cakeId,
     });
     setProject(next);
+    projectRef.current = next;
+    const cakeName = cakes.find((c) => c.id === cakeId)?.name || "Cake";
+    showToast(`🎂 Selected ${cakeName}! Saved ✨`);
+
+    try {
+      await persistGiftProject(next);
+      console.log("[Cake Selection] Synced to Supabase:", cakeId);
+    } catch (err) {
+      console.warn("[Cake Selection] Supabase sync deferred:", err);
+    }
   };
 
   // Blow candles action
@@ -1046,40 +1081,40 @@ export default function RoomPage() {
 
       {/* ── Top Header & Navigation Bar ── */}
       <div className="absolute top-5 left-5 right-5 z-30 flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <motion.button
-            whileHover={{ scale: 1.05 }}
+            whileHover={{ scale: 1.04 }}
             whileTap={{ scale: 0.95 }}
             onClick={handleReturnToWish}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/55 hover:bg-black/75 border border-white/20 text-white/90 backdrop-blur-xl text-xs font-semibold shadow-lg transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/55 hover:bg-black/75 border border-white/20 text-white/90 backdrop-blur-xl text-[11px] font-semibold shadow-md transition-all cursor-pointer"
           >
-            <ArrowLeft size={15} />
+            <ArrowLeft size={13} />
             <span>Wish Page</span>
           </motion.button>
 
           <motion.button
-            whileHover={{ scale: 1.05 }}
+            whileHover={{ scale: 1.04 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsMailboxOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-pink-500/80 to-rose-400/80 hover:from-pink-500 hover:to-rose-400 border border-pink-300/40 text-white backdrop-blur-xl text-xs font-semibold shadow-[0_4px_18px_rgba(244,114,182,0.35)] transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-pink-500/80 to-rose-400/80 hover:from-pink-500 hover:to-rose-400 border border-pink-300/40 text-white backdrop-blur-xl text-[11px] font-semibold shadow-[0_4px_18px_rgba(244,114,182,0.35)] transition-all cursor-pointer"
           >
-            <Mail size={15} />
+            <Mail size={13} />
             <span>Love Mailbox 🫧</span>
           </motion.button>
 
-          <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 border border-white/15 backdrop-blur-md text-xs text-white">
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 border border-white/15 backdrop-blur-md text-[11px] text-white">
             <span>Decorating room for:</span>
             <span className="font-bold text-pink-300">{name}</span>
           </div>
         </div>
 
         {/* Top Right: Music Player, Decorate & Share */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           {/* ── Floating Birthday Song Controller Pill ── */}
           <div className="relative">
             <motion.div
               whileHover={{ scale: 1.03 }}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-black/60 hover:bg-black/80 border border-pink-400/40 text-white backdrop-blur-xl shadow-[0_4px_20px_rgba(244,114,182,0.25)] text-xs cursor-pointer transition-all"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 hover:bg-black/80 border border-pink-400/40 text-white backdrop-blur-xl shadow-[0_4px_20px_rgba(244,114,182,0.25)] text-[11px] cursor-pointer transition-all"
             >
               {/* Play / Pause button */}
               <button
@@ -1087,36 +1122,35 @@ export default function RoomPage() {
                   e.stopPropagation();
                   togglePlay();
                 }}
-                className="w-6 h-6 rounded-full bg-pink-500 hover:bg-pink-600 flex items-center justify-center text-white shadow-sm transition-transform active:scale-95"
+                className="w-5 h-5 rounded-full bg-pink-500 hover:bg-pink-600 flex items-center justify-center text-white shadow-sm transition-transform active:scale-95"
                 title={isPlaying ? "Pause Song" : "Play Birthday Song"}
               >
-                {isPlaying ? <Pause size={12} fill="white" /> : <Play size={12} fill="white" className="ml-0.5" />}
+                {isPlaying ? <Pause size={10} fill="white" /> : <Play size={10} fill="white" className="ml-0.5" />}
               </button>
 
               {/* Rotating vinyl icon & animated sound bars */}
               <div
                 onClick={() => !isReceiver && setShowMusicMenu((m) => !m)}
-                className={`flex items-center gap-2 pr-1 ${!isReceiver ? "cursor-pointer" : ""}`}
+                className={`flex items-center gap-1.5 pr-1 ${!isReceiver ? "cursor-pointer" : ""}`}
                 title={!isReceiver ? "Song options & settings" : undefined}
               >
                 <Disc
-                  size={16}
-                  className={`text-pink-300 transition-transform ${
-                    isPlaying ? "animate-spin" : ""
-                  }`}
+                  size={14}
+                  className={`text-pink-300 transition-transform ${isPlaying ? "animate-spin" : ""
+                    }`}
                   style={{ animationDuration: "3s" }}
                 />
 
-                <span className="max-w-[110px] sm:max-w-[150px] truncate font-medium text-white/95">
+                <span className="max-w-[100px] sm:max-w-[130px] truncate font-medium text-white/95">
                   {songTitle}
                 </span>
 
                 {/* Equalizer bars animation when playing */}
                 {isPlaying ? (
-                  <div className="flex items-end gap-[2px] h-3.5">
-                    <span className="w-[2.5px] bg-pink-400 rounded-full animate-[bounce_0.8s_infinite]" style={{ height: "60%" }} />
-                    <span className="w-[2.5px] bg-pink-300 rounded-full animate-[bounce_0.6s_infinite_0.2s]" style={{ height: "100%" }} />
-                    <span className="w-[2.5px] bg-pink-400 rounded-full animate-[bounce_0.9s_infinite_0.4s]" style={{ height: "75%" }} />
+                  <div className="flex items-end gap-[2px] h-3">
+                    <span className="w-[2px] bg-pink-400 rounded-full animate-[bounce_0.8s_infinite]" style={{ height: "60%" }} />
+                    <span className="w-[2px] bg-pink-300 rounded-full animate-[bounce_0.6s_infinite_0.2s]" style={{ height: "100%" }} />
+                    <span className="w-[2px] bg-pink-400 rounded-full animate-[bounce_0.9s_infinite_0.4s]" style={{ height: "75%" }} />
                   </div>
                 ) : (
                   <span className="text-[10px] text-white/50">paused</span>
@@ -1129,10 +1163,10 @@ export default function RoomPage() {
                   e.stopPropagation();
                   toggleMute();
                 }}
-                className="text-white/70 hover:text-white p-1 transition-colors"
+                className="text-white/70 hover:text-white p-0.5 transition-colors cursor-pointer"
                 title={isMuted ? "Unmute" : "Mute"}
               >
-                {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
               </button>
             </motion.div>
 
@@ -1222,13 +1256,13 @@ export default function RoomPage() {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setIsDecorating((d) => !d)}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full border text-xs font-semibold backdrop-blur-xl shadow-lg transition-all ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border text-xs font-semibold backdrop-blur-xl shadow-lg transition-all ${
                   isDecorating
                     ? "bg-pink-500 text-white border-pink-400"
                     : "bg-black/55 hover:bg-black/75 text-white/90 border-white/20"
                 }`}
               >
-                <Palette size={15} />
+                <Palette size={13} />
                 <span>{isDecorating ? "Close Dock" : "Change Cake"}</span>
               </motion.button>
 
@@ -1237,9 +1271,9 @@ export default function RoomPage() {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setIsShareModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-semibold text-xs shadow-[0_4px_20px_rgba(244,114,182,0.4)] backdrop-blur-xl transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-semibold text-xs shadow-[0_4px_20px_rgba(244,114,182,0.4)] backdrop-blur-xl transition-all cursor-pointer"
               >
-                <Share2 size={15} />
+                <Share2 size={13} />
                 <span>{project.isSealed ? "Sealed 💌" : "Share"}</span>
               </motion.button>
             </>
@@ -1265,46 +1299,46 @@ export default function RoomPage() {
 
       {/* ── Bottom Controls: Blow Candles or Open Decorator ── */}
       {!isDecorating && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 pointer-events-auto">
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 pointer-events-auto">
           {isCandlesLit ? (
             <motion.button
-              whileHover={{ scale: 1.06, y: -2 }}
+              whileHover={{ scale: 1.04, y: -1 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleBlowCandles}
-              className="flex items-center gap-2.5 px-7 py-3.5 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 text-white font-['Poppins',sans-serif] font-bold text-sm sm:text-base shadow-[0_10px_35px_rgba(251,146,60,0.55)] border border-white/30 cursor-pointer"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 text-white font-['Poppins',sans-serif] font-bold text-xs sm:text-sm shadow-[0_6px_25px_rgba(251,146,60,0.45)] border border-white/30 cursor-pointer"
             >
-              <Flame size={19} className="animate-pulse" />
+              <Flame size={16} className="animate-pulse" />
               <span>Make a Wish & Blow Candles! 🎂</span>
             </motion.button>
           ) : (
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <motion.button
-                whileHover={{ scale: 1.05 }}
+                whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={handleRelight}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-black/65 hover:bg-black/80 border border-white/20 text-white font-medium text-xs sm:text-sm backdrop-blur-xl shadow-lg cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/65 hover:bg-black/80 border border-white/20 text-white font-medium text-xs backdrop-blur-xl shadow-md cursor-pointer"
               >
-                <RotateCcw size={14} />
+                <RotateCcw size={13} />
                 <span>Relight Candles</span>
               </motion.button>
 
               <motion.button
-                whileHover={{ scale: 1.05 }}
+                whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={handleBurstMoreConfetti}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-pink-500 hover:bg-pink-600 text-white font-medium text-xs sm:text-sm shadow-[0_4px_20px_rgba(244,114,182,0.4)] cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-pink-500 hover:bg-pink-600 text-white font-medium text-xs shadow-[0_4px_16px_rgba(244,114,182,0.35)] cursor-pointer"
               >
-                <PartyPopper size={14} />
+                <PartyPopper size={13} />
                 <span>More Confetti! 🎉</span>
               </motion.button>
 
               <motion.button
-                whileHover={{ scale: 1.05 }}
+                whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setShowWishCard(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 text-white font-medium text-xs sm:text-sm backdrop-blur-xl shadow-lg cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 text-white font-medium text-xs backdrop-blur-xl shadow-md cursor-pointer"
               >
-                <Heart size={14} />
+                <Heart size={13} />
                 <span>Read Wish</span>
               </motion.button>
             </div>
@@ -1338,9 +1372,9 @@ export default function RoomPage() {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => handleSelectCake(activeCakeKey)}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-bold text-xs shadow-lg hover:shadow-pink-500/40 transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-400 text-white font-bold text-xs shadow-md hover:shadow-pink-500/40 transition-all cursor-pointer"
                 >
-                  <Check size={14} strokeWidth={3} />
+                  <Check size={13} strokeWidth={3} />
                   <span>Place this Cake on Table</span>
                 </motion.button>
               </div>
@@ -1437,7 +1471,7 @@ export default function RoomPage() {
 
                 <button
                   onClick={() => setShowWishCard(false)}
-                  className="w-7 h-7 rounded-full bg-white/75 hover:bg-white/95 backdrop-blur-md text-[#5a3a44] hover:text-black flex items-center justify-center border border-pink-200/60 shadow-xs cursor-pointer transition-colors"
+                  className="w-6 h-6 rounded-full bg-white/75 hover:bg-white/95 backdrop-blur-md text-[#5a3a44] hover:text-black flex items-center justify-center border border-pink-200/60 shadow-xs cursor-pointer transition-colors text-xs"
                 >
                   ✕
                 </button>
@@ -1446,8 +1480,8 @@ export default function RoomPage() {
               {/* Letter Content Area (Inside Gold Border) */}
               <div className="relative z-10 flex-1 flex flex-col px-8 sm:px-12 pt-4 pb-7 overflow-hidden text-left">
                 {/* Salutation - indented to clear top-left lily */}
-                <div className="mb-2 pl-6 sm:pl-10">
-                  <p className="font-['Alex_Brush',cursive] text-[34px] sm:text-[40px] text-[#2e1820] leading-tight select-none">
+                <div className="mb-1.5 pl-6 sm:pl-10">
+                  <p className="font-['Alex_Brush',cursive] text-[24px] sm:text-[28px] text-[#2e1820] leading-tight select-none">
                     My Dearest {name},
                   </p>
                 </div>
@@ -1473,7 +1507,7 @@ export default function RoomPage() {
                 {/* Sign-off & Romantic Wax Seal */}
                 <div className="pt-3 flex items-end justify-between select-none border-t border-[#dfc2c8]/40 mt-2">
                   <div>
-                    <p className="font-['Alex_Brush',cursive] text-[24px] sm:text-[28px] text-[#2e1820] leading-none">
+                    <p className="font-['Alex_Brush',cursive] text-[18px] sm:text-[21px] text-[#2e1820] leading-none">
                       Yours always,
                     </p>
                   </div>
@@ -1486,7 +1520,7 @@ export default function RoomPage() {
               </div>
 
               {/* Footer Controls */}
-              <div className="relative z-20 px-6 sm:px-8 py-3 bg-white/75 backdrop-blur-md border-t border-pink-200/60 flex items-center justify-between">
+              <div className="relative z-20 px-6 sm:px-8 py-2.5 bg-white/75 backdrop-blur-md border-t border-pink-200/60 flex items-center justify-between">
                 <span className="text-[11px] text-[#785460] font-['Poppins',sans-serif]">
                   Cake: {currentCake.name}
                 </span>
@@ -1494,17 +1528,31 @@ export default function RoomPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleReturnToWish}
-                    className="px-4 py-2 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-[#785460] hover:bg-white/80 transition-colors cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-[#785460] hover:bg-white/80 transition-colors cursor-pointer"
                   >
                     Back to Wish Page
                   </button>
-                  <button
-                    onClick={shareGift}
-                    className="px-5 py-2 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
-                    style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
-                  >
-                    {shared ? "Link Copied!" : "Share Surprise 💌"}
-                  </button>
+                  {!isReceiver ? (
+                    <button
+                      onClick={() => {
+                        setShowWishCard(false);
+                        setIsShareModalOpen(true);
+                      }}
+                      className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                      style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                    >
+                      <Share2 size={13} />
+                      <span>{project.isSealed ? "Sealed 💌" : "Share Surprise 💌"}</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowWishCard(false)}
+                      className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                      style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                    >
+                      <span>Fold Wish 💌</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -1529,6 +1577,9 @@ export default function RoomPage() {
         }}
         projectId={project.projectId}
         isReceiver={isReceiver}
+        project={project}
+        onProjectSync={(synced) => setProject(synced)}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
       />
 
       {/* ── Seal & Share Modal ── */}

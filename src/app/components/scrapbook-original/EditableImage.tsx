@@ -2,8 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, Crop, X, Loader2 } from 'lucide-react';
 import Cropper from 'react-easy-crop';
-import { uploadImageToCloud } from '../../utils/imageCloudUpload';
-import { uploadGiftPhoto } from '../../giftStore';
+import { useCachedMediaUrl } from '../../utils/mediaCache';
 
 export interface EditableImageProps {
   className?: string;
@@ -13,49 +12,8 @@ export interface EditableImageProps {
   isViewerMode?: boolean;
 }
 
-// Fast pre-downscaler to avoid decoding massive images on the main thread
-async function prepareImageForCropper(file: File): Promise<string> {
-  if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
-    try {
-      const bitmap = await createImageBitmap(file);
-      const MAX_DIM = 2048;
-      if (bitmap.width > MAX_DIM || bitmap.height > MAX_DIM) {
-        const scale = MAX_DIM / Math.max(bitmap.width, bitmap.height);
-        const w = Math.round(bitmap.width * scale);
-        const h = Math.round(bitmap.height * scale);
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(bitmap, 0, 0, w, h);
-          bitmap.close();
-          return canvas.toDataURL('image/jpeg', 0.92);
-        }
-      }
-      bitmap.close();
-    } catch (e) {
-      console.warn('Fast downscale skipped:', e);
-    }
-  }
-  return URL.createObjectURL(file);
-}
-
-// Robust image loader that avoids hanging if already cached/complete
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
-    img.src = src;
-    if (img.complete && img.naturalWidth > 0) {
-      resolve(img);
-    }
-  });
-}
-
 export function EditableImage({ className, defaultColor, imageUrl, onImageUpload, isViewerMode }: EditableImageProps) {
+  const displayUrl = useCachedMediaUrl(imageUrl);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -89,23 +47,16 @@ export function EditableImage({ className, defaultColor, imageUrl, onImageUpload
     }
   }, [isCropping]);
 
-  const handleFile = async (file: File) => {
+  const handleFile = (file: File) => {
     if (file && file.type.startsWith('image/')) {
-      setIsLoadingFile(true);
-      try {
-        if (imageSrc && imageSrc.startsWith('blob:')) {
-          URL.revokeObjectURL(imageSrc);
-        }
-        const preparedUrl = await prepareImageForCropper(file);
-        setImageSrc(preparedUrl);
-        setCrop({ x: 0, y: 0 });
-        setZoom(1);
-        setIsCropping(true);
-      } catch (err) {
-        console.error('Failed to prepare image for cropper:', err);
-      } finally {
-        setIsLoadingFile(false);
+      if (imageSrc && imageSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(imageSrc);
       }
+      const url = URL.createObjectURL(file);
+      setImageSrc(url);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setIsCropping(true);
     }
   };
 
@@ -158,47 +109,49 @@ export function EditableImage({ className, defaultColor, imageUrl, onImageUpload
     setIsSavingCrop(true);
 
     try {
-      const image = await loadImage(imageSrc);
+      const image = new Image();
+      image.src = imageSrc;
+      await new Promise((resolve, reject) => {
+        image.onload = () => resolve(image);
+        image.onerror = (e) => reject(e);
+        if (image.complete && image.naturalWidth > 0) {
+          resolve(image);
+        }
+      });
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get 2d canvas context');
 
-      const MAX_SIZE = 1600;
+      const MAX_SIZE = 1500;
       let scale = 1;
       if (croppedAreaPixels.width > MAX_SIZE || croppedAreaPixels.height > MAX_SIZE) {
         scale = MAX_SIZE / Math.max(croppedAreaPixels.width, croppedAreaPixels.height);
       }
 
-      const outWidth = Math.max(1, Math.round(croppedAreaPixels.width * scale));
-      const outHeight = Math.max(1, Math.round(croppedAreaPixels.height * scale));
-
-      canvas.width = outWidth;
-      canvas.height = outHeight;
+      canvas.width = Math.round(croppedAreaPixels.width * scale);
+      canvas.height = Math.round(croppedAreaPixels.height * scale);
 
       // Background for unfilled areas stays the page color or white
       ctx.fillStyle = defaultColor || '#FFFFFF';
-      ctx.fillRect(0, 0, outWidth, outHeight);
-
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.drawImage(
         image,
-        Math.round(-croppedAreaPixels.x * scale),
-        Math.round(-croppedAreaPixels.y * scale),
-        Math.round(image.naturalWidth * scale),
-        Math.round(image.naturalHeight * scale)
+        -croppedAreaPixels.x * scale,
+        -croppedAreaPixels.y * scale,
+        image.width * scale,
+        image.height * scale
       );
 
-      const croppedImageSrc = canvas.toDataURL('image/jpeg', 0.92);
+      const croppedImageSrc = canvas.toDataURL('image/jpeg', 0.88);
 
-      // 1. Immediately apply the cropped image to the scrapbook for instant UI feedback!
+      // Apply the cropped image directly to the scrapbook state
       if (onImageUpload) {
         onImageUpload(croppedImageSrc);
       }
 
-      // 2. Close modal immediately and clean up
+      // Close modal immediately and clean up
       if (imageSrc.startsWith('blob:')) {
         URL.revokeObjectURL(imageSrc);
       }
@@ -207,21 +160,6 @@ export function EditableImage({ className, defaultColor, imageUrl, onImageUpload
       setZoom(1);
       setCrop({ x: 0, y: 0 });
       setIsSavingCrop(false);
-
-      // 3. Upload resized image to Supabase in the background
-      (async () => {
-        try {
-          const res = await fetch(croppedImageSrc);
-          const blob = await res.blob();
-          const uploadedUrl = await uploadImageToCloud(blob);
-          if (uploadedUrl && onImageUpload) {
-            onImageUpload(uploadedUrl);
-          }
-        } catch (uploadErr) {
-          // If network / cloud is offline, croppedDataUrl is safely retained in state & localStorage
-          console.warn('Background photo cloud upload deferred/failed:', uploadErr);
-        }
-      })();
     } catch (err) {
       console.error('Error cropping image:', err);
       setIsSavingCrop(false);
@@ -258,8 +196,8 @@ export function EditableImage({ className, defaultColor, imageUrl, onImageUpload
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {imageUrl ? (
-          <img src={imageUrl} alt="User upload" className="absolute inset-0 w-full h-full object-cover" style={{ borderRadius: 'inherit' }} />
+        {(displayUrl || imageUrl) ? (
+          <img src={displayUrl || imageUrl} alt="User upload" className="absolute inset-0 w-full h-full object-cover" style={{ borderRadius: 'inherit' }} />
         ) : null}
 
         {isLoadingFile ? (

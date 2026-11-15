@@ -258,6 +258,58 @@ export async function loadProjectJsonFromSupabaseStorage(
   return null;
 }
 
+const SCRAPBOOK_API_URL = `https://${projectId}.supabase.co/functions/v1/make-server-8601d715/scrapbooks`;
+
+/**
+ * Saves scrapbook pages and wish project metadata directly to Supabase Edge Function KV Store.
+ * Returns the generated 12-character ID.
+ */
+export async function saveScrapbookToSupabase(pages: any[]): Promise<{ id: string; expiresAt: number }> {
+  const res = await fetch(SCRAPBOOK_API_URL, {
+    method: "POST",
+    headers: {
+      apikey: publicAnonKey,
+      Authorization: `Bearer ${publicAnonKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ pages }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Supabase Edge Function save failed (${res.status}): ${errText}`);
+  }
+
+  const result = await res.json();
+  console.log(`[Supabase Edge Function] ✅ Saved scrapbook with ID:`, result.id);
+  return result;
+}
+
+/**
+ * Loads scrapbook pages and wish project metadata from Supabase Edge Function KV Store by 12-char ID.
+ */
+export async function loadScrapbookFromSupabase(id: string): Promise<any> {
+  if (!id || !/^[a-z0-9]{12}$/i.test(id)) return null;
+
+  try {
+    const res = await fetch(`${SCRAPBOOK_API_URL}/${encodeURIComponent(id)}`, {
+      headers: {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[Supabase Edge Function] ✅ Loaded scrapbook [${id}] with ${data.pages?.length || 0} pages`);
+      return data;
+    }
+  } catch (err) {
+    console.warn(`[Supabase Edge Function] Could not fetch scrapbook [${id}]:`, err);
+  }
+  return null;
+}
+
 /**
  * Saves project JSON to Catbox (free, permanent, zero-auth, CORS *).
  */

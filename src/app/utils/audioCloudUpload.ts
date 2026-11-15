@@ -5,38 +5,13 @@ import { isSupabaseConfigured, uploadToSupabaseStorage } from "./supabaseStorage
  * Uses user's personal Supabase Storage if configured; falls back to fast direct streaming audio providers.
  */
 
-// Provider 1: tmpfiles.org (Fast upload, returns direct download/stream link)
-async function uploadToTmpFiles(file: File | Blob, fileName: string): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file, fileName);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    const res = await fetch("https://tmpfiles.org/api/v1/upload", {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`tmpfiles status ${res.status}`);
-    const json = await res.json();
-    if (json?.data?.url) {
-      // Direct streaming URL replaces tmpfiles.org/ with tmpfiles.org/dl/
-      return String(json.data.url).replace("tmpfiles.org/", "tmpfiles.org/dl/");
-    }
-    throw new Error("No URL in tmpfiles response");
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Provider 2: Catbox Permanent (Free direct audio streaming host)
+// Provider 1: Catbox Permanent (Free direct audio streaming host)
 async function uploadToCatbox(file: File | Blob, fileName: string): Promise<string> {
   const formData = new FormData();
   formData.append("reqtype", "fileupload");
   formData.append("fileToUpload", file, fileName);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  const timer = setTimeout(() => controller.abort(), 14000);
 
   try {
     const res = await fetch("https://catbox.moe/user/api.php", {
@@ -55,14 +30,14 @@ async function uploadToCatbox(file: File | Blob, fileName: string): Promise<stri
   }
 }
 
-// Provider 3: Catbox Litterbox (72-hour direct audio streaming link)
+// Provider 2: Catbox Litterbox (72-hour direct audio streaming link)
 async function uploadToLitterbox(file: File | Blob, fileName: string): Promise<string> {
   const formData = new FormData();
   formData.append("reqtype", "fileupload");
   formData.append("time", "72h");
   formData.append("fileToUpload", file, fileName);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  const timer = setTimeout(() => controller.abort(), 12000);
 
   try {
     const res = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", {
@@ -76,6 +51,31 @@ async function uploadToLitterbox(file: File | Blob, fileName: string): Promise<s
       return text;
     }
     throw new Error("Invalid response from litterbox");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Provider 3: tmpfiles.org (Fast upload, returns direct download/stream link)
+async function uploadToTmpFiles(file: File | Blob, fileName: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file, fileName);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch("https://tmpfiles.org/api/v1/upload", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`tmpfiles status ${res.status}`);
+    const json = await res.json();
+    if (json?.data?.url) {
+      // Direct streaming URL replaces tmpfiles.org/ with tmpfiles.org/dl/
+      return String(json.data.url).replace("tmpfiles.org/", "tmpfiles.org/dl/");
+    }
+    throw new Error("No URL in tmpfiles response");
   } finally {
     clearTimeout(timer);
   }

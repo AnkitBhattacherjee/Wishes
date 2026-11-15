@@ -7,6 +7,6 @@ export function getScrapbookScale(): number {
       return rect.width / width;
     }
   }
-  return 0.85;
+  return 0.82;
 }
 

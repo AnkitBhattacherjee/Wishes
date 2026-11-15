@@ -9,7 +9,7 @@ interface DiaryContainerProps {
 
 export function DiaryContainer({ children }: DiaryContainerProps) {
   return (
-    <div className="relative w-[1243px] h-[872px] scale-[0.3] origin-center sm:scale-[0.425] md:scale-[0.51] lg:scale-[0.68] xl:scale-[0.85] transition-transform">
+    <div className="relative w-[1243px] h-[872px] scale-[0.3] origin-center sm:scale-[0.425] md:scale-[0.51] lg:scale-[0.66] xl:scale-[0.82] transition-transform">
       <div className="absolute h-[226.302px] left-[-150px] top-[350.11px] w-[156.201px]">
         <img alt="" className="absolute block inset-0 max-w-none size-full" height="226.302" src={imgVector34} width="156.201" />
       </div>

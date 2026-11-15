@@ -57,6 +57,7 @@ export default function OriginalScrapbookApp({
   pages,
   onPagesChange,
   onSave,
+  onOpenShareModal,
   isReceiver,
 }: {
   visible: boolean;
@@ -64,6 +65,7 @@ export default function OriginalScrapbookApp({
   pages: ScrapbookPage[];
   onPagesChange: (pages: ScrapbookPage[]) => void;
   onSave: () => Promise<boolean>;
+  onOpenShareModal?: () => void;
   isReceiver?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -88,9 +90,9 @@ export default function OriginalScrapbookApp({
       clearTimeout(autoSaveTimerRef.current);
     }
     setDirty(true);
-    setIsSaving(true);
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
+        setIsSaving(true);
         await onSave();
         setDirty(false);
       } catch (err) {
@@ -98,7 +100,7 @@ export default function OriginalScrapbookApp({
       } finally {
         setIsSaving(false);
       }
-    }, 600);
+    }, 2500);
   }, [onSave]);
 
   const updateData = (key: string, value: string) => {
@@ -211,16 +213,16 @@ export default function OriginalScrapbookApp({
             className="relative flex min-h-screen w-full flex-col items-center justify-center"
           >
             <motion.h1
-              className="absolute top-[8%] z-10 w-full px-4 text-center text-4xl tracking-wide text-white drop-shadow-md md:text-5xl lg:top-[12%] lg:text-[64px]"
+              className="absolute top-[6%] z-10 w-full px-4 text-center text-3xl tracking-wide text-white drop-shadow-md md:text-4xl lg:top-[8%] lg:text-[48px]"
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
               style={{ fontFamily: "'Instrument Serif', serif" }}
             >
-              Share your memories with someone special
+              {isReceiver ? "Someone shared their memories with you" : "Share your memories with someone special"}
             </motion.h1>
             <motion.div
-              className="group relative mt-16 flex w-full max-w-[700px] cursor-pointer flex-col items-center justify-center px-8 lg:mt-24"
+              className="group relative mt-10 flex w-full max-w-[620px] cursor-pointer flex-col items-center justify-center px-6 lg:mt-14"
               onClick={() => setIsOpen(true)}
               whileHover="hover"
             >
@@ -229,7 +231,7 @@ export default function OriginalScrapbookApp({
                 variants={{ hover: { rotate: -2, scale: 1.02 } }}
                 transition={{ type: "spring", stiffness: 300 }}
               >
-                <div className="relative flex h-[800px] w-[600px] items-center justify-center overflow-hidden pointer-events-none scale-[0.85] origin-center">
+                <div className="relative flex h-[640px] w-[480px] items-center justify-center overflow-hidden pointer-events-none scale-[0.82] origin-center">
                   <img
                     src={coverImage}
                     alt="My Scrapbook Diary"
@@ -239,7 +241,7 @@ export default function OriginalScrapbookApp({
               </motion.div>
               <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
                 <motion.button
-                  className="pointer-events-auto rounded-full bg-pink-400 px-8 py-4 text-xl font-bold text-white shadow-2xl"
+                  className="pointer-events-auto rounded-full bg-pink-400 px-5 py-2.5 text-sm font-bold text-white shadow-xl"
                   variants={{ hover: { opacity: 1, y: 0, scale: 1.05 } }}
                   initial={{ opacity: 0, y: 20, scale: 1 }}
                   whileTap={{ scale: 0.95 }}
@@ -250,7 +252,7 @@ export default function OriginalScrapbookApp({
             </motion.div>
             <button
               onClick={handleExit}
-              className="absolute right-5 top-5 rounded-full bg-black/25 px-4 py-2 text-xs text-white/80 backdrop-blur-md hover:bg-black/40 transition cursor-pointer"
+              className="absolute right-5 top-5 rounded-full bg-black/25 px-3.5 py-1.5 text-[11px] text-white/80 backdrop-blur-md hover:bg-black/40 transition cursor-pointer"
             >
               Back to wish
             </button>
@@ -269,31 +271,41 @@ export default function OriginalScrapbookApp({
               isViewerMode={Boolean(isReceiver)}
             >
             <div className="fixed left-0 right-0 top-4 z-50 flex justify-between px-8">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <button
                   onClick={handleCloseDiary}
-                  className="rounded-full bg-white/80 px-4 py-2 font-semibold text-pink-600 shadow backdrop-blur transition hover:bg-white cursor-pointer"
+                  className="rounded-full bg-white/80 px-3.5 py-1.5 text-xs font-semibold text-pink-600 shadow-sm backdrop-blur transition hover:bg-white cursor-pointer"
                 >
                   Close Diary
                 </button>
                 {!isReceiver && pages.length > 1 && (
                   <button
                     onClick={deletePage}
-                    className="flex items-center gap-2 rounded-full bg-red-100/80 px-4 py-2 font-semibold text-red-600 shadow backdrop-blur transition hover:bg-red-100"
+                    className="flex items-center gap-1.5 rounded-full bg-red-100/80 px-3 py-1.5 text-xs font-semibold text-red-600 shadow-sm backdrop-blur transition hover:bg-red-100 cursor-pointer"
                   >
-                    <Trash2 size={18} /> Delete Page
+                    <Trash2 size={14} /> Delete Page
                   </button>
                 )}
                 {isReceiver && (
-                  <span className="rounded-full bg-white/70 px-4 py-1.5 text-xs font-semibold text-pink-700 shadow-sm backdrop-blur">
-                    📖 Memory Scrapbook • Page {currentPage + 1} of {pages.length}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={saveToDevice}
+                      disabled={isSavingImage}
+                      className="flex items-center gap-1.5 bg-pink-100 text-pink-600 px-3.5 py-1.5 rounded-full shadow-sm text-xs font-bold hover:bg-pink-200 transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSavingImage ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      {isSavingImage ? "Saving..." : "Save to device"}
+                    </button>
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-[11px] font-semibold text-pink-700 shadow-xs backdrop-blur">
+                      📖 Page {currentPage + 1} of {pages.length}
+                    </span>
+                  </div>
                 )}
               </div>
               {!isReceiver && (
-                <div className="flex gap-4">
+                <div className="flex items-center gap-2.5">
                   <select
-                    className="cursor-pointer rounded-full bg-white/80 px-4 py-2 font-semibold text-gray-700 shadow outline-none backdrop-blur transition hover:bg-white"
+                    className="cursor-pointer rounded-full bg-white/80 px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm outline-none backdrop-blur transition hover:bg-white"
                     onChange={(event) =>
                       document.documentElement.style.setProperty("--font-family", event.target.value)
                     }
@@ -307,11 +319,23 @@ export default function OriginalScrapbookApp({
                   <button
                     onClick={save}
                     disabled={isSaving}
-                    className="flex items-center gap-2 rounded-full bg-white/85 px-5 py-2 font-bold text-pink-600 shadow transition hover:bg-white disabled:opacity-50 cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 text-xs font-bold text-pink-600 shadow-sm transition hover:bg-white disabled:opacity-50 cursor-pointer"
                   >
-                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : dirty ? <Save size={18} /> : <Check size={18} />}
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : dirty ? <Save size={14} /> : <Check size={14} />}
                     {isSaving ? "Saving..." : dirty ? "Save" : "Saved ✓"}
                   </button>
+                  {onOpenShareModal && (
+                    <button
+                      onClick={async () => {
+                        await save();
+                        onOpenShareModal();
+                      }}
+                      className="flex items-center gap-1.5 rounded-full bg-pink-500 hover:bg-pink-600 active:scale-95 px-4 py-1.5 text-xs font-bold text-white shadow-md transition cursor-pointer"
+                    >
+                      <Sparkles size={14} />
+                      <span>Seal & Share 💌</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -320,9 +344,10 @@ export default function OriginalScrapbookApp({
               {currentPage > 0 && (
                 <button
                   onClick={() => setCurrentPage((page) => page - 1)}
-                  className="absolute left-0 z-20 rounded-full bg-white/80 p-4 text-pink-500 shadow-lg backdrop-blur transition-all hover:scale-110 hover:bg-white"
+                  className="absolute left-1 z-20 rounded-full bg-white/85 p-2 text-pink-500 shadow-md backdrop-blur transition-all hover:scale-105 hover:bg-white cursor-pointer"
+                  title="Previous Page"
                 >
-                  <ChevronLeft size={32} />
+                  <ChevronLeft size={22} />
                 </button>
               )}
               <DiaryContainer>
@@ -346,31 +371,32 @@ export default function OriginalScrapbookApp({
               {currentPage < pages.length - 1 && (
                 <button
                   onClick={() => setCurrentPage((page) => page + 1)}
-                  className="absolute right-0 z-20 rounded-full bg-white/80 p-4 text-pink-500 shadow-lg backdrop-blur transition-all hover:scale-110 hover:bg-white"
+                  className="absolute right-1 z-20 rounded-full bg-white/85 p-2 text-pink-500 shadow-md backdrop-blur transition-all hover:scale-105 hover:bg-white cursor-pointer"
+                  title="Next Page"
                 >
-                  <ChevronRight size={32} />
+                  <ChevronRight size={22} />
                 </button>
               )}
             </div>
 
-            <div className="fixed bottom-8 z-50 flex items-center gap-4 rounded-full bg-white/80 px-6 py-3 shadow-lg backdrop-blur">
-              <div className="flex gap-2">
+            <div className="fixed bottom-5 z-50 flex items-center gap-3 rounded-full bg-white/85 px-4 py-2 shadow-md backdrop-blur text-xs">
+              <div className="flex gap-1.5">
                 {pages.map((_, index) => (
                   <button
                     key={index}
                     onClick={() => setCurrentPage(index)}
-                    className={`size-3 rounded-full transition-all ${index === currentPage ? "scale-125 bg-pink-500" : "bg-pink-200 hover:bg-pink-300"}`}
+                    className={`size-2.5 rounded-full transition-all ${index === currentPage ? "scale-125 bg-pink-500" : "bg-pink-200 hover:bg-pink-300"}`}
                     title={`Page ${index + 1}`}
                   />
                 ))}
               </div>
               {!isReceiver && pages.length < MAX_PAGES && (
-                <div className="relative border-l-2 border-pink-100 pl-4">
+                <div className="relative border-l-2 border-pink-100 pl-3">
                   <button
                     onClick={() => setIsAddingPage((value) => !value)}
-                    className="flex items-center gap-1 font-semibold text-pink-500 transition hover:text-pink-600"
+                    className="flex items-center gap-1 font-semibold text-pink-500 transition hover:text-pink-600 text-xs"
                   >
-                    <PlusCircle size={20} /> Add Page
+                    <PlusCircle size={15} /> Add Page
                   </button>
                   <AnimatePresence>
                     {isAddingPage && (
@@ -378,11 +404,11 @@ export default function OriginalScrapbookApp({
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
-                        className="absolute bottom-full left-1/2 mb-4 flex w-[300px] -translate-x-1/2 gap-2 rounded-xl bg-white p-2 shadow-xl"
+                        className="absolute bottom-full left-1/2 mb-3 flex w-[280px] -translate-x-1/2 gap-2 rounded-xl bg-white p-2 shadow-xl"
                       >
-                        <button onClick={() => addPage(1)} className="flex-1 rounded-lg bg-pink-50 px-3 py-2 text-sm text-pink-700 hover:bg-pink-100">Layout A</button>
-                        <button onClick={() => addPage(2)} className="flex-1 rounded-lg bg-pink-50 px-3 py-2 text-sm text-pink-700 hover:bg-pink-100">Layout B</button>
-                        <button onClick={() => addPage(3)} className="flex-1 rounded-lg bg-pink-50 px-3 py-2 text-sm text-pink-700 hover:bg-pink-100">Layout C</button>
+                        <button onClick={() => addPage(1)} className="flex-1 rounded-lg bg-pink-50 px-2.5 py-1.5 text-xs text-pink-700 hover:bg-pink-100">Layout A</button>
+                        <button onClick={() => addPage(2)} className="flex-1 rounded-lg bg-pink-50 px-2.5 py-1.5 text-xs text-pink-700 hover:bg-pink-100">Layout B</button>
+                        <button onClick={() => addPage(3)} className="flex-1 rounded-lg bg-pink-50 px-2.5 py-1.5 text-xs text-pink-700 hover:bg-pink-100">Layout C</button>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -392,9 +418,9 @@ export default function OriginalScrapbookApp({
               <button
                 onClick={saveToDevice}
                 disabled={isSavingImage}
-                className={`flex items-center gap-1 font-semibold text-pink-500 ${!isReceiver ? "border-l-2 border-pink-100 pl-4" : ""}`}
+                className={`flex items-center gap-1 font-semibold text-pink-500 text-xs ${!isReceiver ? "border-l-2 border-pink-100 pl-3" : ""}`}
               >
-                {isSavingImage ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
+                {isSavingImage ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 Save to device
               </button>
             </div>

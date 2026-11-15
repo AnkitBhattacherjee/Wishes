@@ -1,2 +1,2 @@
 export const projectId = "kbbokdvbkqkffcilrdrc";
-export const publicAnonKey = "sb_publishable_pQXVZQxZ-IPSBTWlfLcLWg_Q0BMJbBy";
+export const publicAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtiYm9rZHZia3FrZmZjaWxyZHJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1NDIyMTEsImV4cCI6MjEwOTExODIxMX0.YLLvPJtzmgo4-FyD5m7WHqT8jNC-HWmNrx7t87YD0AU";

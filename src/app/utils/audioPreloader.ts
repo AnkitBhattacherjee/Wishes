@@ -7,6 +7,7 @@
 
 import type { GiftProject } from "../giftStore";
 import defaultBirthdaySong from "../../imports/birthday_celebration_custom.m4a";
+import { saveMediaBlob, getCachedBlobUrlSync, resolveCachedMediaUrl } from "./mediaCache";
 
 // Track preloaded URLs to avoid duplicate network fetches
 const preloadedUrls = new Set<string>();
@@ -28,9 +29,10 @@ export function preloadAudio(url?: string | null): Promise<string> {
     return Promise.resolve(trimmed);
   }
 
-  // Already cached as blob URL?
-  if (preloadedBlobUrls.has(trimmed)) {
-    return Promise.resolve(preloadedBlobUrls.get(trimmed)!);
+  // Already cached as blob URL in memory or persistent mediaCache?
+  const syncBlobUrl = getCachedBlobUrlSync(trimmed) || preloadedBlobUrls.get(trimmed);
+  if (syncBlobUrl) {
+    return Promise.resolve(syncBlobUrl);
   }
 
   // Already preloading?
@@ -112,10 +114,10 @@ export function preloadAudio(url?: string | null): Promise<string> {
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
         return res.blob();
       })
-      .then((blob) => {
+      .then(async (blob) => {
         clearTimeout(timeoutId);
         try {
-          const blobUrl = URL.createObjectURL(blob);
+          const blobUrl = await saveMediaBlob(trimmed, blob);
           preloadedBlobUrls.set(trimmed, blobUrl);
           finalize(blobUrl);
         } catch {
@@ -140,7 +142,7 @@ export function preloadAudio(url?: string | null): Promise<string> {
  */
 export function getPreloadedAudioUrl(url?: string | null): string {
   if (!url) return "";
-  return preloadedBlobUrls.get(url) || url;
+  return getCachedBlobUrlSync(url) || preloadedBlobUrls.get(url) || url;
 }
 
 /**

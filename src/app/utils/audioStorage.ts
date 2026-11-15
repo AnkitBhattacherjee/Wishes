@@ -1,3 +1,5 @@
+import { resolveCachedMediaUrl } from "./mediaCache";
+
 /**
  * Browser IndexedDB storage for offline & instant local audio playback.
  */
@@ -69,6 +71,10 @@ export async function resolveAudioPlaybackUrl(url?: string | null, fallbackKey?:
     return null;
   }
   if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
+    try {
+      const cached = await resolveCachedMediaUrl(url);
+      if (cached) return cached;
+    } catch {}
     return url;
   }
   if (url.startsWith("idb:")) {
