@@ -14,7 +14,11 @@ export function StickerModal() {
 
   const filteredStickers = selectedCategory === 'all'
     ? STICKER_LIBRARY
-    : STICKER_LIBRARY.filter((s) => s.category === selectedCategory);
+    : STICKER_LIBRARY.filter((s) =>
+        Array.isArray(s.category)
+          ? s.category.includes(selectedCategory)
+          : s.category === selectedCategory
+      );
 
   const handleCustomUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

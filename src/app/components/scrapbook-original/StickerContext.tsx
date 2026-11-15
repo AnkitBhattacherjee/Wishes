@@ -25,6 +25,17 @@ interface StickerContextType {
   applySticker: (src: string, item?: StickerItem) => void;
   removeSticker: (id: string) => void;
   updateStickerPos: (id: string, pos: { x: number; y: number }) => void;
+  updateStickerTransform: (
+    id: string,
+    transform: {
+      x?: number;
+      y?: number;
+      rotation?: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+    }
+  ) => void;
 }
 
 const StickerContext = createContext<StickerContextType | null>(null);
@@ -143,20 +154,51 @@ export function StickerProvider({ children, data, onUpdate, isViewerMode }: Stic
     }
   };
 
-  const updateStickerPos = (id: string, pos: { x: number; y: number }) => {
+  const updateStickerTransform = (
+    id: string,
+    transform: {
+      x?: number;
+      y?: number;
+      rotation?: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+    }
+  ) => {
     if (id.startsWith('custom_')) {
       try {
         let existing: CustomStickerData[] = data.custom_stickers
           ? JSON.parse(data.custom_stickers)
           : [];
-        existing = existing.map((s) => (s.id === id ? { ...s, x: pos.x, y: pos.y } : s));
+        existing = existing.map((s) => {
+          if (s.id !== id) return s;
+          const next = { ...s };
+          if (transform.x !== undefined) next.x = transform.x;
+          if (transform.y !== undefined) next.y = transform.y;
+          if (transform.rotation !== undefined) next.rotation = transform.rotation;
+          if (transform.width !== undefined) next.width = transform.width;
+          if (transform.height !== undefined) next.height = transform.height;
+          return next;
+        });
         onUpdate('custom_stickers', JSON.stringify(existing));
       } catch (e) {
-        console.error('Failed to update custom sticker pos', e);
+        console.error('Failed to update custom sticker transform', e);
       }
     } else {
-      onUpdate(`sticker_pos_${id}`, JSON.stringify(pos));
+      if (transform.x !== undefined && transform.y !== undefined) {
+        onUpdate(`sticker_pos_${id}`, JSON.stringify({ x: transform.x, y: transform.y }));
+      }
+      if (transform.rotation !== undefined) {
+        onUpdate(`sticker_rot_${id}`, String(transform.rotation));
+      }
+      if (transform.scale !== undefined) {
+        onUpdate(`sticker_scale_${id}`, String(transform.scale));
+      }
     }
+  };
+
+  const updateStickerPos = (id: string, pos: { x: number; y: number }) => {
+    updateStickerTransform(id, { x: pos.x, y: pos.y });
   };
 
   // Keyboard shortcut: Delete or Backspace removes currently selected sticker
@@ -201,6 +243,7 @@ export function StickerProvider({ children, data, onUpdate, isViewerMode }: Stic
         applySticker,
         removeSticker,
         updateStickerPos,
+        updateStickerTransform,
       }}
     >
       {children}

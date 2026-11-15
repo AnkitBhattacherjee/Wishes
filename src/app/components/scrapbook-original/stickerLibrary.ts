@@ -58,16 +58,74 @@ import imgParty2 from '../../../imports/sticker_party_2.png';
 import imgParty3 from '../../../imports/sticker_party_3.png';
 import imgParty4 from '../../../imports/sticker_party_4.png';
 
+// Newly Added Bengali & Quirky Pop Stickers
+import imgStickerOmg from '../../../imports/Bengali Kawaii Sticker Sheet.png';
+import imgStickerCuteCat from '../../../imports/Bengali Kawaii Sticker Sheet (1).png';
+import imgStickerShankhachurni from '../../../imports/Colorful Bengali and English Sticker Sheet1.png';
+import imgStickerBhoot from '../../../imports/Colorful Bengali and English Sticker Sheet2.png';
+import imgStickerSelfie from '../../../imports/Colorful Bengali and English Sticker Sheet3.png';
+import imgStickerAmiTulbo from '../../../imports/Colorful Bengali and English Sticker Sheet5.png';
+
 export interface StickerItem {
   id: string;
   name: string;
-  category: 'memories' | 'decorative' | 'washi' | 'stamps' | 'celebration' | 'bouquets' | 'quotes' | 'love';
+  category: string | string[];
   src: string;
   defaultWidth?: number;
   defaultHeight?: number;
 }
 
 export const STICKER_LIBRARY: StickerItem[] = [
+  // ── Newly Added Bengali & Quirky Pop Stickers ──
+  {
+    id: 'bengali_shankhachurni',
+    name: 'শাকচুন্নি (Shankhachurni)',
+    category: ['bengali_fun', 'quotes'],
+    src: imgStickerShankhachurni,
+    defaultWidth: 155,
+    defaultHeight: 115,
+  },
+  {
+    id: 'bengali_bhoot',
+    name: 'ভূত (Cute Bhoot)',
+    category: ['bengali_fun', 'decorative'],
+    src: imgStickerBhoot,
+    defaultWidth: 140,
+    defaultHeight: 130,
+  },
+  {
+    id: 'bengali_ami_tulbo',
+    name: 'আমি তুলবো (Ami Tulbo 📸)',
+    category: ['bengali_fun', 'quotes', 'celebration'],
+    src: imgStickerAmiTulbo,
+    defaultWidth: 145,
+    defaultHeight: 140,
+  },
+  {
+    id: 'bengali_lele_selfie',
+    name: 'Le Le Selfie Le Le 📸',
+    category: ['bengali_fun', 'quotes', 'celebration'],
+    src: imgStickerSelfie,
+    defaultWidth: 165,
+    defaultHeight: 120,
+  },
+  {
+    id: 'kawaii_cute_kitty',
+    name: 'Cute Kawaii Kitty 🐾',
+    category: ['bengali_fun', 'decorative', 'love'],
+    src: imgStickerCuteCat,
+    defaultWidth: 140,
+    defaultHeight: 160,
+  },
+  {
+    id: 'comic_omg_pop',
+    name: 'OMG Comic Pop 💥',
+    category: ['bengali_fun', 'quotes', 'celebration'],
+    src: imgStickerOmg,
+    defaultWidth: 145,
+    defaultHeight: 145,
+  },
+
   // Floral Bouquets
   { id: 'bouquet_floral_1', name: 'Peony & Rose Bouquet', category: 'bouquets', src: imgBouquetFloral1, defaultWidth: 140, defaultHeight: 180 },
   { id: 'bouquet_floral_2', name: 'Spring Blossom Bouquet', category: 'bouquets', src: imgBouquetFloral2, defaultWidth: 140, defaultHeight: 180 },
@@ -134,6 +192,7 @@ export const STICKER_LIBRARY: StickerItem[] = [
 
 export const STICKER_CATEGORIES = [
   { id: 'all', label: 'All Stickers' },
+  { id: 'bengali_fun', label: 'Bengali & Desi Fun 🎭' },
   { id: 'bouquets', label: 'Floral Bouquets 💐' },
   { id: 'quotes', label: 'Quotes 💬' },
   { id: 'love', label: 'Pastel Love 💕' },
