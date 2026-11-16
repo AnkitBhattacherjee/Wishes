@@ -1407,6 +1407,22 @@ export function MailboxModal({
               </button>
             )}
 
+            {/* Receiver: Create Your Own Surprise */}
+            {isReceiver && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  window.location.hash = "#/";
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-xs font-bold shadow-md border border-pink-300/50 backdrop-blur-xl transition-all cursor-pointer hover:scale-105 active:scale-95 bg-gradient-to-r from-pink-500/90 via-rose-500/90 to-purple-500/90"
+                title="Create your own celebration surprise ✨"
+              >
+                <Sparkles size={12} className="text-yellow-200" />
+                <span>Create Your Own ✨</span>
+              </button>
+            )}
+
             {/* Close Button in Glass */}
             <button
               onClick={onClose}

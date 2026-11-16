@@ -168,6 +168,7 @@ export type GiftProject = {
   isSealed?: boolean;
   sealedAt?: number;
   updatedAt: number;
+  isHydrated?: boolean;
 };
 
 const STORAGE_KEY = "make-a-wish-project-v1";
@@ -209,6 +210,7 @@ export const emptyProject = (): GiftProject => ({
   cloudUrl: null,
   supabaseId: null,
   updatedAt: Date.now(),
+  isHydrated: false,
 });
 
 function normalize(project: Partial<GiftProject>): GiftProject {
@@ -363,7 +365,7 @@ export function loadGiftProject(): GiftProject {
   // 1. Check persistent local cache by targetId first (supports multi-project caching)
   if (targetId) {
     const cachedById = getProjectLocalCacheSync(targetId);
-    if (cachedById) {
+    if (cachedById && cachedById.isHydrated) {
       const normalizedCached = normalize(cachedById);
       if (isReceiverView || normalizedCached.isSealed) {
         return { ...normalizedCached, isSealed: true };
@@ -405,6 +407,7 @@ export function loadGiftProject(): GiftProject {
     editToken: editParam || "",
     cloudUrl: cloudParam || null,
     isSealed: isReceiverView,
+    isHydrated: false,
   };
 }
 
@@ -738,6 +741,7 @@ export async function persistGiftProject(project: GiftProject, forceMediaResolut
     }
   }
   next.updatedAt = Date.now();
+  next.isHydrated = true;
 
   // Primary: Save directly to Supabase Edge Function KV Store (like scrapbook/project1)
   try {
@@ -818,9 +822,15 @@ export async function loadCloudGiftProject(id: string, cloudUrl?: string): Promi
     Boolean(cached?.isSealed)
   );
 
-  // If already loaded and saved locally:
-  if (cached && (cached.recipient || cached.projectId)) {
-    console.log(`[Local Cache] ✅ Found project [${id}] in local storage/IndexedDB. Instant reload with zero network delay.`);
+  // Check if we already have an ACTUALLY hydrated project in local cache
+  const isActuallyHydrated = Boolean(
+    cached &&
+    cached.isHydrated &&
+    (cached.recipient !== "Someone" || cached.wish || cached.cake || (cached.mailboxItems && cached.mailboxItems.length > 0))
+  );
+
+  if (isActuallyHydrated && cached) {
+    console.log(`[Local Cache] ✅ Found hydrated project [${id}] in local storage/IndexedDB. Instant reload with zero network delay.`);
     reportCloudStatus("saved");
 
     // Ensure all media files are cached locally in IndexedDB in the background
@@ -893,6 +903,7 @@ export async function loadCloudGiftProject(id: string, cloudUrl?: string): Promi
           customSongYoutubeId: mergedSongYt,
           mailboxItems: meta.mailboxItems || local.mailboxItems,
           journalPages: restoredPages.length > 0 ? restoredPages : local.journalPages,
+          isHydrated: true,
         });
 
         try {

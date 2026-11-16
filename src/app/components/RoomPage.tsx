@@ -325,14 +325,18 @@ export default function RoomPage() {
 
   const [project, setProject] = useState(() => {
     const saved = loadGiftProject();
-    return saveGiftProject({
-      ...saved,
-      recipient: routeState.name || saved.recipient,
-      occasion: routeState.occasion || saved.occasion,
-      relationship: routeState.relationship || saved.relationship,
-      wish: routeState.wish || saved.wish,
-      letterFont: routeState.letterFont || saved.letterFont || "caveat",
-    });
+    if (routeState && (routeState.name || routeState.occasion || routeState.relationship || routeState.wish)) {
+      return saveGiftProject({
+        ...saved,
+        recipient: routeState.name || saved.recipient,
+        occasion: routeState.occasion || saved.occasion,
+        relationship: routeState.relationship || saved.relationship,
+        wish: routeState.wish || saved.wish,
+        letterFont: routeState.letterFont || saved.letterFont || "caveat",
+        isHydrated: true,
+      });
+    }
+    return saved;
   });
 
   const { recipient: name, occasion, relationship, wish } = project;
@@ -1249,8 +1253,8 @@ export default function RoomPage() {
             </AnimatePresence>
           </div>
 
-          {/* Decorate / Change Cake Button */}
-          {!isReceiver && (
+          {/* Decorate / Change Cake Button (Sender) or Create Your Own (Receiver) */}
+          {!isReceiver ? (
             <>
               <motion.button
                 whileHover={{ scale: 1.05 }}
@@ -1277,6 +1281,17 @@ export default function RoomPage() {
                 <span>{project.isSealed ? "Sealed 💌" : "Share"}</span>
               </motion.button>
             </>
+          ) : (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => navigate("/")}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-pink-500 via-rose-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white font-['Poppins',sans-serif] font-semibold text-xs shadow-[0_4px_20px_rgba(244,114,182,0.4)] backdrop-blur-xl border border-white/20 transition-all cursor-pointer"
+              title="Create your own personalized wish surprise ✨"
+            >
+              <Sparkles size={13} className="text-yellow-200" />
+              <span>Create Your Own ✨</span>
+            </motion.button>
           )}
         </div>
       </div>
@@ -1545,13 +1560,23 @@ export default function RoomPage() {
                       <span>{project.isSealed ? "Sealed 💌" : "Share Surprise 💌"}</span>
                     </button>
                   ) : (
-                    <button
-                      onClick={() => setShowWishCard(false)}
-                      className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
-                      style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
-                    >
-                      <span>Fold Wish 💌</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => navigate("/")}
+                        className="px-3.5 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-[#785460] bg-white/80 hover:bg-white border border-pink-200/80 shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                        title="Craft your own surprise"
+                      >
+                        <Sparkles size={12} className="text-pink-500" />
+                        <span>Create Your Own ✨</span>
+                      </button>
+                      <button
+                        onClick={() => setShowWishCard(false)}
+                        className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                        style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                      >
+                        <span>Fold Wish 💌</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

@@ -333,6 +333,7 @@ function WishModal({
   initialWish,
   initialFontStyle,
   isReceiver,
+  onCreateOwn,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -342,6 +343,7 @@ function WishModal({
   initialWish: string;
   initialFontStyle?: "caveat" | "dancing" | "playfair";
   isReceiver?: boolean;
+  onCreateOwn?: () => void;
 }) {
   const [wish, setWish] = useState(initialWish);
   const [fontStyle, setFontStyle] = useState<LetterFontStyle>(
@@ -543,14 +545,32 @@ function WishModal({
 
               <div className="flex items-center gap-2">
                 {isReceiver ? (
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
-                    style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
-                  >
-                    <span>Fold Letter 💌</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        if (onCreateOwn) {
+                          onCreateOwn();
+                        } else {
+                          window.location.hash = "#/";
+                        }
+                      }}
+                      className="px-3.5 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-semibold text-white bg-gradient-to-r from-pink-500 via-rose-500 to-purple-500 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Craft your own surprise"
+                    >
+                      <Sparkles size={12} className="text-yellow-200" />
+                      <span>Create Your Own ✨</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="px-4 py-1.5 rounded-full font-['Poppins',sans-serif] text-xs font-bold text-white shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                      style={{ background: "linear-gradient(135deg, #e8849c 0%, #c4587a 100%)" }}
+                    >
+                      <span>Fold Letter 💌</span>
+                    </button>
+                  </div>
                 ) : (
                   <>
                     <button
@@ -595,13 +615,27 @@ export default function WishPage() {
   const routeState = location.state as { name?: string; occasion?: string; relationship?: string } | null;
   const [project, setProject] = useState<GiftProject>(() => {
     const loaded = loadGiftProject();
-    const next = {
-      ...loaded,
-      recipient: routeState?.name || loaded.recipient,
-      occasion: routeState?.occasion || loaded.occasion,
-      relationship: routeState?.relationship || loaded.relationship,
-    };
-    return saveGiftProject(next);
+    if (routeState && (routeState.name || routeState.occasion || routeState.relationship)) {
+      const shouldStartFresh =
+        loaded.isSealed ||
+        Boolean(loaded.supabaseId) ||
+        (loaded.recipient && loaded.recipient !== "Someone" && loaded.recipient !== routeState.name);
+      const base = shouldStartFresh ? emptyProject() : loaded;
+      const next: GiftProject = {
+        ...base,
+        projectId: shouldStartFresh ? crypto.randomUUID() : base.projectId,
+        editToken: shouldStartFresh ? newToken() : base.editToken,
+        isSealed: false,
+        supabaseId: shouldStartFresh ? null : base.supabaseId,
+        cloudUrl: shouldStartFresh ? null : base.cloudUrl,
+        recipient: routeState.name || base.recipient,
+        occasion: routeState.occasion || base.occasion,
+        relationship: routeState.relationship || base.relationship,
+        isHydrated: true,
+      };
+      return saveGiftProject(next);
+    }
+    return loaded;
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
@@ -1161,24 +1195,39 @@ export default function WishPage() {
         </div>
       )}
 
-      {/* Top Action Buttons: Receiver sees ONLY the elegant Gift Guide; Sender sees Guide, Share & Back */}
+      {/* Top Action Buttons: Receiver sees Create Your Own & Gift Guide; Sender sees Guide, Share & Back */}
       {isReceiver ? (
-        <motion.button
-          className="absolute right-[28px] top-[28px] z-30 flex items-center gap-1.5 rounded-full px-3.5 py-1.5 cursor-pointer border border-white/80 shadow-md backdrop-blur-md transition-all hover:bg-white/95"
-          style={{
-            background: "rgba(255, 255, 255, 0.78)",
-            boxShadow: "0 4px 20px rgba(196,88,122,0.18), 0 0 0 1px rgba(255,255,255,0.7)",
-          }}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.96 }}
-          onClick={() => setIsGuideOpen(true)}
-          title="Open Celebration Gift Guide ✨"
-        >
-          <Sparkles size={14} className="text-pink-600 animate-spin" style={{ animationDuration: "5s" }} />
-          <span className="font-['Poppins',sans-serif] text-xs font-semibold text-[#5a3a44]">
-            ✨ Gift Guide
-          </span>
-        </motion.button>
+        <div className="absolute right-[20px] sm:right-[28px] top-[22px] sm:top-[28px] z-30 flex items-center gap-2 pointer-events-auto">
+          {/* Create Your Own Wish Button */}
+          <motion.button
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full cursor-pointer border border-pink-300/60 shadow-[0_4px_18px_rgba(244,114,182,0.35)] backdrop-blur-md transition-all bg-gradient-to-r from-pink-500 via-rose-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white font-['Poppins',sans-serif] text-xs font-semibold hover:shadow-lg"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => navigate("/")}
+            title="Create your own birthday or celebration surprise for someone special ✨"
+          >
+            <Sparkles size={13} className="text-yellow-200" />
+            <span>Create Your Own ✨</span>
+          </motion.button>
+
+          {/* Guide button - Receiver */}
+          <motion.button
+            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 cursor-pointer border border-white/80 shadow-md backdrop-blur-md transition-all hover:bg-white/95"
+            style={{
+              background: "rgba(255, 255, 255, 0.78)",
+              boxShadow: "0 4px 20px rgba(196,88,122,0.18), 0 0 0 1px rgba(255,255,255,0.7)",
+            }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setIsGuideOpen(true)}
+            title="Open Celebration Gift Guide ✨"
+          >
+            <Sparkles size={14} className="text-pink-600 animate-spin" style={{ animationDuration: "5s" }} />
+            <span className="font-['Poppins',sans-serif] text-xs font-semibold text-[#5a3a44] hidden sm:inline">
+              ✨ Guide
+            </span>
+          </motion.button>
+        </div>
       ) : (
         <>
           {/* Guide button - Sender */}
@@ -1443,6 +1492,25 @@ export default function WishPage() {
         </motion.div>
       )}
 
+      {/* Receiver Bottom Prompt */}
+      {isReceiver && (
+        <motion.div
+          className="absolute bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.8, duration: 0.6 }}
+        >
+          <button
+            onClick={() => navigate("/")}
+            className="px-4 py-2 rounded-full flex items-center gap-2 bg-white/85 hover:bg-white text-[#7a4856] hover:text-pink-600 border border-pink-200/80 shadow-[0_4px_20px_rgba(236,72,153,0.15)] backdrop-blur-md font-['Poppins',sans-serif] text-xs font-semibold cursor-pointer transition-all hover:scale-105 active:scale-95"
+            title="Make a custom surprise for your friends & loved ones"
+          >
+            <Sparkles size={13} className="text-pink-500 animate-pulse" />
+            <span>Touched by this? Create Your Own Surprise ✨</span>
+          </button>
+        </motion.div>
+      )}
+
       {/* Front Card Wish Modal (Short single-line greeting wish) */}
       <FrontWishModal
         isOpen={isFrontWishModalOpen}
@@ -1466,6 +1534,10 @@ export default function WishPage() {
         initialWish={savedWish}
         initialFontStyle={project.letterFont || "caveat"}
         isReceiver={isReceiver}
+        onCreateOwn={() => {
+          setIsModalOpen(false);
+          navigate("/");
+        }}
       />
 
       {/* Journal Overlay */}

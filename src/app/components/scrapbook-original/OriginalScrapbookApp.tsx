@@ -296,6 +296,16 @@ export default function OriginalScrapbookApp({
                       {isSavingImage ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                       {isSavingImage ? "Saving..." : "Save to device"}
                     </button>
+                    <button
+                      onClick={() => {
+                        window.location.hash = "#/";
+                      }}
+                      className="flex items-center gap-1.5 bg-gradient-to-r from-pink-500 via-rose-500 to-purple-500 text-white px-3.5 py-1.5 rounded-full shadow-sm text-xs font-bold hover:opacity-95 transition cursor-pointer"
+                      title="Create your own surprise"
+                    >
+                      <Sparkles size={12} className="text-yellow-200" />
+                      <span>Create Your Own ✨</span>
+                    </button>
                     <span className="rounded-full bg-white/70 px-3 py-1 text-[11px] font-semibold text-pink-700 shadow-xs backdrop-blur">
                       📖 Page {currentPage + 1} of {pages.length}
                     </span>

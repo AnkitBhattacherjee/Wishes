@@ -289,7 +289,7 @@ export async function saveScrapbookToSupabase(pages: any[]): Promise<{ id: strin
  * Loads scrapbook pages and wish project metadata from Supabase Edge Function KV Store by 12-char ID.
  */
 export async function loadScrapbookFromSupabase(id: string): Promise<any> {
-  if (!id || !/^[a-z0-9]{12}$/i.test(id)) return null;
+  if (!id || !/^[a-zA-Z0-9_-]{6,64}$/i.test(id)) return null;
 
   try {
     const res = await fetch(`${SCRAPBOOK_API_URL}/${encodeURIComponent(id)}`, {

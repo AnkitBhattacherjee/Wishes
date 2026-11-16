@@ -37,15 +37,18 @@ export function ShareModal({
   project,
   onProjectUpdate,
 }: ShareModalProps) {
-  const [copiedType, setCopiedType] = useState<"receiver" | "sender" | null>(null);
+  const [copiedType, setCopiedType] = useState<"receiver" | "sender" | "wifi" | null>(null);
   const [isSealing, setIsSealing] = useState(false);
 
   if (!isOpen) return null;
 
   const isSealed = Boolean(project.isSealed);
+  const isLocalhost =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
   // 1. Copy Receiver Link & Seal Gift
-  const handleCopyReceiverLink = async () => {
+  const handleCopyReceiverLink = async (forceWifiIp = false) => {
     setIsSealing(true);
     // Automatically seal if not yet sealed
     const nextProject = isSealed ? project : sealGiftProject(project);
@@ -55,6 +58,10 @@ export function ShareModal({
     // Ensure full project and all media are saved to public cloud storage before copying the link
     try {
       syncedProject = await persistGiftProject(nextProject, true);
+      if (!syncedProject.supabaseId) {
+        // Retry once if first attempt did not return an id
+        syncedProject = await persistGiftProject(syncedProject, true);
+      }
       onProjectUpdate(syncedProject);
     } catch (e) {
       console.warn("Could not sync sealed project to cloud before sharing:", e);
@@ -62,28 +69,31 @@ export function ShareModal({
       setIsSealing(false);
     }
 
-    const receiverUrl = createReceiverShareLink(syncedProject);
+    let receiverUrl = createReceiverShareLink(syncedProject);
+    if (forceWifiIp && isLocalhost) {
+      receiverUrl = receiverUrl.replace("localhost", "192.168.0.102").replace("127.0.0.1", "192.168.0.102");
+    }
 
     try {
-      if (navigator.share) {
+      if (navigator.share && !isLocalhost) {
         try {
           await navigator.share({
             title: `A celebration surprise for ${nextProject.recipient}`,
             text: `A little magical world was made just for you, ${nextProject.recipient}. 🌸`,
             url: receiverUrl,
           });
-          setCopiedType("receiver");
-          setTimeout(() => setCopiedType(null), 3000);
+          setCopiedType(forceWifiIp ? "wifi" : "receiver");
+          setTimeout(() => setCopiedType(null), 3500);
           return;
         } catch {}
       }
       await navigator.clipboard.writeText(receiverUrl);
-      setCopiedType("receiver");
-      setTimeout(() => setCopiedType(null), 3000);
+      setCopiedType(forceWifiIp ? "wifi" : "receiver");
+      setTimeout(() => setCopiedType(null), 3500);
     } catch {
       await navigator.clipboard.writeText(receiverUrl).catch(() => {});
-      setCopiedType("receiver");
-      setTimeout(() => setCopiedType(null), 3000);
+      setCopiedType(forceWifiIp ? "wifi" : "receiver");
+      setTimeout(() => setCopiedType(null), 3500);
     }
   };
 
@@ -258,6 +268,36 @@ export function ShareModal({
                   </button>
                 )}
               </div>
+
+              {/* Localhost / Same-WiFi Guidance Banner */}
+              {isLocalhost && (
+                <div className="mt-1 p-2.5 rounded-xl bg-amber-50/90 border border-amber-300/80 text-[11px] text-amber-950 flex flex-col gap-1.5">
+                  <div className="flex items-center gap-1 font-semibold text-amber-900 text-xs">
+                    <span>📱</span>
+                    <span>Opening on your phone or sending to someone nearby?</span>
+                  </div>
+                  <p className="text-[10.5px] text-amber-800/90 leading-snug">
+                    Links containing <strong>localhost</strong> only open on this computer! To open on a phone or friend connected to the same Wi-Fi, copy the Wi-Fi link below.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyReceiverLink(true)}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-700 hover:to-rose-700 text-white font-medium text-xs shadow-xs cursor-pointer transition-all"
+                  >
+                    {copiedType === "wifi" ? (
+                      <>
+                        <Check size={13} />
+                        <span>Wi-Fi Link Copied! (192.168.0.102) 📱</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={13} />
+                        <span>Copy Wi-Fi Link for Phone (192.168.0.102) 📱</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* PATH 2: Sender Secret Draft Link (Edit on another device or resume later) */}
